@@ -1,0 +1,10 @@
+jupyter
+matplotlib
+torch==2.5.1
+pandas
+pywer
+tqdm
+omegaconf
+gigaam
+numpy
+IPython
