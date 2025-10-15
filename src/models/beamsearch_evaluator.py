@@ -1,46 +1,107 @@
-# Трансформерная языковая модель для переранжирования
+from torch.utils.data import DataLoader
+from src.data.dataset import collate_fn
+from tqdm import tqdm
+from src.utils.utils import get_gigaam_logprobs, decode_indices
+import pywer
+import editdistance
 
-import torch
-import torch.nn.functional as F
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from typing import List, Dict, Tuple
+class BeamSearchEvaluator:
+    def __init__(self, model, beam_search_decoder, lm_model=None):
+        self.model = model
+        self.beam_search_decoder = beam_search_decoder
+        self.lm_model = lm_model
 
-class TransformerLMReranker:
-    def __init__(self, model_name: str = "microsoft/DialoGPT-small", device: str = "cuda"):
-        self.device = device
-        self.model = AutoModelForCausalLM.from_pretrained(model_name).to(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        
-    def score_sequence(self, text: str) -> float:
-        """Вычисляет log-вероятность текста с помощью трансформерной LM"""
-        inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(self.device)
-        
-        with torch.no_grad():
-            outputs = self.model(**inputs, labels=inputs["input_ids"])
-            # Возвращаем отрицательный loss (чем выше, тем лучше)
-            return -outputs.loss.item()
-    
-    def rerank_nbest(self, nbest_list: List[Dict], alpha: float = 0.7) -> List[Dict]:
-        """Переранжирует n-best список с комбинацией CTC и LM scores"""
-        reranked = []
-        
-        for candidate in nbest_list:
-            ctc_score = candidate['score']
-            lm_score = self.score_sequence(candidate['hyp'])
-            
-            # Комбинируем scores: alpha * CTC + (1-alpha) * LM
-            combined_score = alpha * ctc_score + (1 - alpha) * lm_score
-            reranked.append({
-                'hyp': candidate['hyp'],
-                'ctc_score': ctc_score,
-                'lm_score': lm_score,
-                'combined_score': combined_score
+    def set_beam_search_decoder(self, beam_search_decoder):
+        self.beam_search_decoder = beam_search_decoder
+
+    def set_lm_model(self, lm_model):
+        self.lm_model = lm_model
+
+    def evaluate(self, dataset, batch_size=8, num_workers=2):
+        # dataloader = torch.utils.data.DataLoader(
+        #     dataset, batch_size=batch_size, collate_fn=collate_fn, num_workers=num_workers
+        # )
+        dataloader = DataLoader(
+            dataset,
+            batch_size=1,
+            shuffle=True,
+            collate_fn=collate_fn,
+            num_workers=1
+        )
+
+        refs, hyps, best_hyps = [], [], []
+        rescored_hyps = [] if self.lm_model else None
+        n_bests = []
+
+        for wav_batch, wav_lengths, texts in tqdm(dataloader):
+            logprob_batch, encoded_len_batch = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
+            beamsearch_result = self.beam_search_decoder(logprob_batch.cpu(), encoded_len_batch.cpu())
+
+            for i, result in enumerate(beamsearch_result):
+                ref = texts[i]
+                refs.append(ref)
+
+                best_hyp, best_rescored_hyp = self._process_nbest(result, ref)
+                hyps.append(best_hyp[0])
+                best_hyps.append(best_hyp[1])
+                n_bests.append(best_hyp[2])
+
+                if self.lm_model:
+                    rescored_hyps.append(best_rescored_hyp)
+
+        return self._compute_metrics(refs, hyps, best_hyps, rescored_hyps, n_bests)
+
+    def _process_nbest(self, result, ref):
+        best_distance = float('inf')
+        best_hyp = None
+        first_hyp = None
+        best_rescored_hyp = None
+        best_score = -float('inf')
+        nbest_list = []
+
+        for j, candidate in enumerate(result):
+            curr_tokens = candidate.tokens
+            curr_hyp = decode_indices(curr_tokens, self.model)
+            nbest_list.append({'hyp': curr_hyp, 'score': candidate.score})
+
+            if j == 0:
+                first_hyp = curr_hyp
+
+            distance = editdistance.eval(ref.split(), curr_hyp.split())
+            if distance < best_distance:
+                best_distance = distance
+                best_hyp = curr_hyp
+
+            if self.lm_model:
+                score = self.lm_model.score(curr_hyp) / len(curr_hyp)
+                if score > best_score:
+                    best_score = score
+                    best_rescored_hyp = curr_hyp
+
+        return (first_hyp, best_hyp, nbest_list), best_rescored_hyp
+
+    def _compute_metrics(self, refs, hyps, best_hyps, rescored_hyps, n_bests):
+        wer = pywer.wer(refs, hyps)
+        oracle_wer = pywer.wer(refs, best_hyps)
+
+        output = {
+            'wer': wer,
+            'oracle_wer': oracle_wer,
+            'references': refs,
+            'hypotheses': hyps,
+            'oracle_hypotheses': best_hyps,
+            'n_bests': n_bests
+        }
+
+        if self.lm_model:
+            rescored_wer = pywer.wer(refs, rescored_hyps)
+            output.update({
+                'rescored_wer': rescored_wer,
+                'rescored_hypotheses': rescored_hyps,
             })
-        
-        # Сортируем по комбинированному score
-        return sorted(reranked, key=lambda x: x['combined_score'], reverse=True)
 
+        return output
+    
 class EnhancedBeamSearchEvaluator(BeamSearchEvaluator):
     def __init__(self, model, beam_search_decoder, lm_model=None, transformer_lm=None):
         super().__init__(model, beam_search_decoder, lm_model)
@@ -143,12 +204,19 @@ class EnhancedBeamSearchEvaluator(BeamSearchEvaluator):
             })
 
         return output
+    
+'''
+How to use new enhanced evaluator:
 
-# Использование
 transformer_lm = TransformerLMReranker("microsoft/DialoGPT-small")
 enhanced_evaluator = EnhancedBeamSearchEvaluator(
-    model=model,
+    model=model, # GigaAM model
     beam_search_decoder=beam_search_decoder,
     lm_model=lm_model,
     transformer_lm=transformer_lm
 )
+
+res = evaluator.evaluate(dataset)
+print('\nBeam search WER: ', res['wer'])
+print('\nBeam search OracleWER: ', res['oracle_wer'])
+'''

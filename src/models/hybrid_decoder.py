@@ -1,5 +1,3 @@
-# Гибридный декодер с shallow fusion
-
 class HybridCTCDecoder:
     def __init__(self, ctc_decoder, transformer_lm, lm_weight=0.3):
         self.ctc_decoder = ctc_decoder
@@ -32,5 +30,14 @@ class HybridCTCDecoder:
         
         return enhanced_results
 
-# Использование гибридного декодера
+'''
+How to use hybrid decoder:
+
 hybrid_decoder = HybridCTCDecoder(beam_search_decoder, transformer_lm, lm_weight=0.3)
+
+evaluator = BeamSearchEvaluator(model, hybrid_decoder, lm_model=lm_model)
+
+res = evaluator.evaluate(custom_dataset)
+print('\nBeam search WER: ', res['wer'])
+print('\nBeam search OracleWER: ', res['oracle_wer'])
+'''
