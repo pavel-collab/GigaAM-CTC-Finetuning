@@ -1,0 +1,72 @@
+# Конфигурация модели
+model:
+  name: "ssl"  # Варианты: "ssl", "v1_ssl", "v2_ssl", "ctc", "v2_ctc", "rnnt", "v2_rnnt"
+  fp16: true  # Использование mixed precision (требует GPU с поддержкой FP16)
+  use_flash_attention: true  # Flash Attention для ускорения (требует совместимый GPU)
+# Конфигурация данных
+data:
+  train_manifest: "./data/train_manifest.json"
+  val_manifest: "./data/val_manifest.json"
+  max_audio_duration: 20.0  # Максимальная длительность аудио (секунды)
+  sample_rate: 16000  # Частота дискретизации
+  num_workers: 4  # Количество worker'ов для DataLoader
+# Конфигурация обучения
+training:
+  output_dir: "./checkpoints"
+  num_epochs: 100
+  max_steps: 100000
+ 
+  # Оптимизация
+  batch_size: 8
+  accumulation_steps: 4  # Эффективный batch_size = batch_size * accumulation_steps
+  learning_rate: 1.0e-4
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+ 
+  # Learning rate scheduler
+  warmup_steps: 1000
+  scheduler_type: "cosine"  # "cosine" или "linear"
+  min_lr: 1.0e-7
+ 
+  # Логирование и сохранение
+  logging_steps: 100
+  eval_steps: 1000
+  save_steps: 5000
+  save_total_limit: 5  # Максимальное количество сохраненных чекпоинтов
+
+# Конфигурация для fine-tuning CTC модели
+ctc:
+  vocab_size: 33  # Размер словаря (для русского: 33 буквы)
+  freeze_encoder_steps: 0  # Количество шагов с замороженным энкодером
+  ctc_weight: 1.0  # Вес CTC loss
+# Конфигурация для fine-tuning RNNT модели
+rnnt:
+  vocab_size: 33
+  freeze_encoder_steps: 0
+  predictor_hidden_size: 640
+  joiner_hidden_size: 640
+# Конфигурация аугментаций (опционально)
+augmentation:
+  enable: true
+  spec_augment:
+    time_mask_max: 50
+    time_mask_num: 2
+    freq_mask_max: 10
+    freq_mask_num: 2
+  noise_augment:
+    enable: false
+    noise_dir: "./noise_data"
+    noise_prob: 0.3
+    snr_min: 5
+    snr_max: 20
+# Конфигурация для продолжения обучения
+resume:
+  checkpoint_path: null  # Путь к чекпоинту для продолжения обучения
+  reset_optimizer: false  # Сбросить optimizer state при загрузке
+# Дополнительные настройки
+misc:
+  seed: 42
+  log_level: "INFO"  # "DEBUG", "INFO", "WARNING", "ERROR"
+  use_wandb: false  # Логирование в Weights & Biases
+  wandb_project: "gigaam-training"
+  use_tensorboard: true  # Логирование в TensorBoard

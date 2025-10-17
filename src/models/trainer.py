@@ -71,6 +71,8 @@ class GigaAMTrainer:
        
         # Загрузка модели
         logger.info(f"Загрузка модели {model_name}...")
+        #TODO: посмотреть как правильно подгружать модель с предобученными весами, переписать эту часть
+        #TODO: более того, нужно проверить, что модель будет не в eval mode, а в train mode, чтобы можно было обновлять веса
         self.model = gigaam.load_model(model_name)
         self.model = self.model.to(self.device)
        
@@ -90,7 +92,7 @@ class GigaAMTrainer:
         """Настройка оптимизатора и планировщика"""
         # Оптимизатор AdamW с weight decay
         self.optimizer = AdamW(
-            self.model.parameters(),
+            self.model.parameters(), #! указываем оптимизатору параметры модели, так мы сможем обновлять ее веса
             lr=self.learning_rate,
             betas=(0.9, 0.98),
             eps=1e-6,
@@ -114,11 +116,14 @@ class GigaAMTrainer:
         Returns:
             значение loss
         """
+        #TODO: будут использоваться при вычислении функции потерь
         audios = batch['audios'].to(self.device)
         audio_lengths = batch['audio_lengths'].to(self.device)
         texts = batch['texts']
 
          # Forward pass с mixed precision
+        #TODO: здесь нужно реализовать функцию потерь, параметр self.model_name будет влиять на тип вычисляемого лосса
+        #TODO: вообще, по хорошему self.model_name лучше переименовать в self.model_type, а еще по хорошему, лучше вообще удалить этот параметр, т к явно исходная модель имеет определенный тип
         if self.use_amp:
             with torch.cuda.amp.autocast():
                 # Здесь должна быть логика вычисления loss
@@ -131,7 +136,6 @@ class GigaAMTrainer:
                
                 # Заглушка - нужно реализовать специфичную логику
                 loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-                logger.warning("Требуется реализация функции loss для вашей задачи!")
         else:
             # outputs = self.model(audios, audio_lengths)
             # loss = self.compute_loss(outputs, texts, audio_lengths)
@@ -159,6 +163,9 @@ class GigaAMTrainer:
         """
         # Создание датасетов
         logger.info("Создание датасетов...")
+        #TODO: здесь не указывает предобработчик, а он нужен
+        #TODO: загрузить преобработчик из GigaAM, вроде как там за это отвечает FeatureExtractor
+        #TODO: как варик -- загрузить GigaAM как git submodule
         train_dataset = AudioDataset(train_manifest)
         train_loader = DataLoader(
             train_dataset,
@@ -236,6 +243,7 @@ class GigaAMTrainer:
                     })
                     running_loss = 0.0
                    
+                   #TODO: сделать отдельную механику, которая будет рисовать графики
                     # Валидация
                     if val_loader and self.global_step % self.eval_steps == 0:
                         val_loss = self.validate(val_loader)
@@ -275,6 +283,7 @@ class GigaAMTrainer:
                 audio_lengths = batch['audio_lengths'].to(self.device)
                 texts = batch['texts']
                
+               #TODO: здесь тоже нужно будет написать вычисление функции потерь
                 if self.use_amp:
                     with torch.cuda.amp.autocast():
                         # loss = self.compute_loss(...)

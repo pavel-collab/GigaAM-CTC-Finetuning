@@ -1,0 +1,3 @@
+[submodule "gigaam"]
+	path = gigaam
+	url = https://github.com/salute-developers/GigaAM.git

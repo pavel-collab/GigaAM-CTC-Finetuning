@@ -8,6 +8,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+#TODO вся вот эта шляпа скорее всего не понадобится, так как мы загрузим FeatureExtractor из GigaAM
 class DatasetPreparator:
     """
     Класс для подготовки датасета к обучению

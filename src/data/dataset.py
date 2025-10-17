@@ -2,7 +2,16 @@ from torch.utils.data import Dataset
 import torch
 import torchaudio
 import json
+import logging
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+#TODO: скачать данные на локалку (возможно это придется сделать отдельным скриптом)
+#TODO: Настроить пути к манифестам и лучше всего сделать это через гидра-конфиг
+#TODO: либо можно так не делать и загружать датасет через load_dataset, делать композицию классов и извлекать нужные поля
+#TODO: тогда надо убрать использование манифестов везде
+#! в послежнем случае могут быть проблемы, что все данные будут в оперативной памяти, это может быть немного больно
 class AudioDataset(Dataset):
     """
     Датасет для загрузки аудиофайлов и транскрипций
@@ -42,11 +51,13 @@ class AudioDataset(Dataset):
         return len(self.data)
    
     def __getitem__(self, idx: int) -> Dict:
+        #TODO: тут надо переписать, чтобы в датасете обращение шло по нужным путям
         item = self.data[idx]
         audio_path = item['audio_path']
         text = item['text']
        
         # Загрузка аудио с использованием предобработчика GigaAM
+        #TODO: эту часть надо переписать, как минимум потому что тут никак не испольщуется предобработчик
         if self.preprocessor:
             waveform, sample_rate = torchaudio.load(audio_path)
             # Преобразование к моно если стерео
