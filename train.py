@@ -13,8 +13,7 @@ def main():
     """
     # Конфигурация обучения
     trainer = GigaAMTrainer(
-        #TODO: выяснить, на что влияет этот параметр и какая в нашем случае модель
-        model_name="ssl",  # или "ctc", "rnnt" для fine-tuning
+        model_type="ctc",  # или "ctc", "rnnt" для fine-tuning
         output_dir="./gigaam_checkpoints",
         learning_rate=1e-4,
         warmup_steps=1000,
@@ -28,10 +27,7 @@ def main():
     )
    
     # Запуск обучения
-    trainer.train(
-        train_manifest="path/to/train_manifest.json",
-        val_manifest="path/to/val_manifest.json",
-    )
+    trainer.train()
 
 if __name__ == "__main__":
     main()

@@ -1,8 +1,11 @@
 from src.data.dataset import AudioDataset
 from src.data.utils import collate_fn
+from src.models.utils import import_gigaam_model
+from gigaam.gigaam.preprocess import FeatureExtractor
+from src.models.utils import get_gigaam_logprobs, get_texts_idxs
 
 import torch
-import gigaam
+import torch.nn as nn
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
@@ -11,6 +14,7 @@ from typing import Dict
 from pathlib import Path
 from tqdm import tqdm
 import json
+import torch.nn.functional as F
 
 import logging
 
@@ -25,7 +29,7 @@ class GigaAMTrainer:
    
     def __init__(
         self,
-        model_name: str = "ssl",  # или "ctc", "rnnt" для fine-tuning уже обученных моделей
+        model_type: str = "ssl",  # или "ctc", "rnnt" для fine-tuning уже обученных моделей
         output_dir: str = "./checkpoints",
         learning_rate: float = 1e-4,
         warmup_steps: int = 1000,
@@ -51,7 +55,9 @@ class GigaAMTrainer:
             fp16: использование mixed precision
             num_workers: количество воркеров для DataLoader
         """
-        self.model_name = model_name
+        #? can we exchange all of this assignments to save_hyperparameters?
+        #? do we need to use a pytorch lightning wrpaper for it?
+        self.model_type = model_type
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
        
@@ -70,15 +76,13 @@ class GigaAMTrainer:
         logger.info(f"Использование устройства: {self.device}")
        
         # Загрузка модели
-        logger.info(f"Загрузка модели {model_name}...")
-        #TODO: посмотреть как правильно подгружать модель с предобученными весами, переписать эту часть
-        #TODO: более того, нужно проверить, что модель будет не в eval mode, а в train mode, чтобы можно было обновлять веса
-        self.model = gigaam.load_model(model_name)
-        self.model = self.model.to(self.device)
-       
-        # Настройка mixed precision
-        self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
-        self.use_amp = fp16 and torch.cuda.is_available()
+        logger.info(f"Загрузка модели gigaam типа {model_type}...")
+        self.model = import_gigaam_model(self.model_type, self.device)
+
+        #! Temporary disable mixed procision       
+        # # Настройка mixed precision
+        # self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
+        # self.use_amp = fp16 and torch.cuda.is_available()
        
         # Инициализация оптимизатора (будет настроен в train)
         self.optimizer = None
@@ -116,44 +120,49 @@ class GigaAMTrainer:
         Returns:
             значение loss
         """
-        #TODO: будут использоваться при вычислении функции потерь
-        audios = batch['audios'].to(self.device)
-        audio_lengths = batch['audio_lengths'].to(self.device)
-        texts = batch['texts']
+        audios = batch['audio'].to(self.device)
+        audio_lengths = batch['num_samples'].to(self.device)
+        texts = batch['transcription']
 
-         # Forward pass с mixed precision
-        #TODO: здесь нужно реализовать функцию потерь, параметр self.model_name будет влиять на тип вычисляемого лосса
-        #TODO: вообще, по хорошему self.model_name лучше переименовать в self.model_type, а еще по хорошему, лучше вообще удалить этот параметр, т к явно исходная модель имеет определенный тип
-        if self.use_amp:
-            with torch.cuda.amp.autocast():
-                # Здесь должна быть логика вычисления loss
-                # Для SSL модели - это masked prediction loss
-                # Для CTC/RNNT - это соответствующие loss функции
+        #! temporary disable mixed precision
+        # # Forward pass с mixed precision
+        # if self.use_amp:
+        #     with torch.cuda.amp.autocast():
+        #         # Здесь должна быть логика вычисления loss
+        #         # Для SSL модели - это masked prediction loss
+        #         # Для CTC/RNNT - это соответствующие loss функции
                
-                # Пример для CTC (нужно адаптировать под конкретную задачу)
-                # outputs = self.model(audios, audio_lengths)
-                # loss = self.compute_loss(outputs, texts, audio_lengths)
+        #         # Пример для CTC (нужно адаптировать под конкретную задачу)
+        #         # outputs = self.model(audios, audio_lengths)
+        #         # loss = self.compute_loss(outputs, texts, audio_lengths)
                
-                # Заглушка - нужно реализовать специфичную логику
-                loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-        else:
-            # outputs = self.model(audios, audio_lengths)
-            # loss = self.compute_loss(outputs, texts, audio_lengths)
-            loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+        #         # Заглушка - нужно реализовать специфичную логику
+        #         loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+        # else:
+        #     # outputs = self.model(audios, audio_lengths)
+        #     # loss = self.compute_loss(outputs, texts, audio_lengths)
+        #     loss = torch.tensor(0.0, requires_grad=True, device=self.device)
        
-        # Backward pass
-        if self.use_amp:
-            self.scaler.scale(loss / self.accumulation_steps).backward()
-        else:
-            (loss / self.accumulation_steps).backward()
+        transcript_lengths=(len(sample) for sample in texts)
+        loss = self.compute_ctc_loss(
+                    audios, 
+                    audio_lengths,
+                    get_texts_idxs(texts),
+                    transcript_lengths=tuple(transcript_lengths)
+                )
+
+        #! temporary disable mixed precision
+        # # Backward pass
+        # if self.use_amp:
+        #     self.scaler.scale(loss / self.accumulation_steps).backward()
+        # else:
+        #     (loss / self.accumulation_steps).backward()
        
+        (loss / self.accumulation_steps).backward()
+
         return loss.item()
     
-    def train(
-        self,
-        train_manifest: str,
-        val_manifest: str = None,
-    ):
+    def train(self):
         """
         Основной цикл обучения
        
@@ -163,30 +172,29 @@ class GigaAMTrainer:
         """
         # Создание датасетов
         logger.info("Создание датасетов...")
-        #TODO: здесь не указывает предобработчик, а он нужен
-        #TODO: загрузить преобработчик из GigaAM, вроде как там за это отвечает FeatureExtractor
-        #TODO: как варик -- загрузить GigaAM как git submodule
-        train_dataset = AudioDataset(train_manifest)
+
+        preprocessor = FeatureExtractor(sample_rate=16000, features=64)
+
+        train_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="train")
         train_loader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=collate_fn,
-            pin_memory=True if torch.cuda.is_available() else False
+            # pin_memory=True if torch.cuda.is_available() else False
         )
        
         val_loader = None
-        if val_manifest:
-            val_dataset = AudioDataset(val_manifest)
-            val_loader = DataLoader(
-                val_dataset,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-                collate_fn=collate_fn,
-                pin_memory=True if torch.cuda.is_available() else False
-            )
+        val_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="validation")
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            collate_fn=collate_fn,
+            # pin_memory=True if torch.cuda.is_available() else False
+        )
        
         # Настройка оптимизатора
         self.setup_optimizer()
@@ -213,14 +221,17 @@ class GigaAMTrainer:
                 # Gradient accumulation
                 if (step + 1) % self.accumulation_steps == 0:
                     # Gradient clipping
-                    if self.use_amp:
-                        self.scaler.unscale_(self.optimizer)
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                        self.scaler.step(self.optimizer)
-                        self.scaler.update()
-                    else:
-                        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                        self.optimizer.step()
+                    #! mixed precision is temporary disabled
+                    # if self.use_amp:
+                    #     self.scaler.unscale_(self.optimizer)
+                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    #     self.scaler.step(self.optimizer)
+                    #     self.scaler.update()
+                    # else:
+                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    #     self.optimizer.step()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    self.optimizer.step()
                    
                     # Warmup
                     if self.global_step < self.warmup_steps:
@@ -263,6 +274,38 @@ class GigaAMTrainer:
         logger.info("Обучение завершено!")
         self.save_checkpoint(name="final_model")
 
+    #! На данный момент с ctc_loss есть определенные проблемы
+    #! Там нужно подавать на вход индексы для токенов транскрипции в словаре модели,
+    #! Но там в словаре только обычные русские буквы, нет символов типо : и др
+    #! Как вариант, можно убирать все символы нерусского алфавита из строчки транскрипции,
+    #! Или считать функцию потерь MSE через логиты
+    def compute_ctc_loss(self, wav_batch, wav_lengths, transcripts, transcript_lengths):
+        # Получаем логиты от модели
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
+        
+        #! Some troubles may be here if batch size is not equal to 1
+        encoded_len = tuple(encoded_len.numpy())
+
+        # CTCLoss требует логиты в формате (T, N, C)
+        # Где T - временная длина, N - размер батча, C - число классов
+        logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
+        
+        # Инициализируем CTC Loss
+        # ctc_loss = nn.CTCLoss(blank=self.model.decoding.blank_id, reduction='mean', zero_infinity=True)
+        #! Here can be an error
+        BLANK_IDX = 33
+        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
+        
+        # Вычисляем потерю
+        loss = ctc_loss(
+            logprobs,           # (T, N, C)
+            transcripts,        # (N, S) -> целочисленные индексы
+            encoded_len,        # (N,) -> длины выходных последовательностей
+            transcript_lengths  # (N,) -> длины целевых последовательностей
+        )
+        
+        return loss
+
     def validate(self, val_loader: DataLoader) -> float:
         """
         Валидация модели
@@ -279,19 +322,27 @@ class GigaAMTrainer:
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Валидация"):
-                audios = batch['audios'].to(self.device)
-                audio_lengths = batch['audio_lengths'].to(self.device)
-                texts = batch['texts']
+                audios = batch['audio'].to(self.device)
+                audio_lengths = batch['num_samples'].to(self.device)
+                texts = batch['transcription']
                
-               #TODO: здесь тоже нужно будет написать вычисление функции потерь
-                if self.use_amp:
-                    with torch.cuda.amp.autocast():
-                        # loss = self.compute_loss(...)
-                        loss = torch.tensor(0.0, device=self.device)  # Заглушка
-                else:
-                    # loss = self.compute_loss(...)
-                    loss = torch.tensor(0.0, device=self.device)  # Заглушка
+                #! mixed precision is temporary disabled
+                # if self.use_amp:
+                #     with torch.cuda.amp.autocast():
+                #         # loss = self.compute_loss(...)
+                #         loss = torch.tensor(0.0, device=self.device)  # Заглушка
+                # else:
+                #     # loss = self.compute_loss(...)
+                #     loss = torch.tensor(0.0, device=self.device)  # Заглушка
                
+                transcript_lengths=(len(sample) for sample in texts)
+                loss = self.compute_ctc_loss(
+                            audios, 
+                            audio_lengths,
+                            get_texts_idxs(texts),
+                            transcript_lengths=tuple(transcript_lengths)
+                        )
+
                 total_loss += loss.item()
                 num_batches += 1
        
