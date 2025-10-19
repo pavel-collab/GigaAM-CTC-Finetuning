@@ -3,7 +3,7 @@ import gigaam
 import os
 import torch
 import re
-from typing import List, Any, Dict
+from typing import List, Dict
 
 def get_model_vocab(model):
     model_vocab = {sym: idx for idx, sym in enumerate(model.decoding.tokenizer.vocab)}

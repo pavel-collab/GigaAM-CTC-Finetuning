@@ -1,4 +1,3 @@
-from typing import Dict, List
 import torch
 
 def collate_fn(batch):
