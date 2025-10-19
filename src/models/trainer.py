@@ -1,8 +1,8 @@
 from src.data.dataset import AudioDataset
 from src.data.utils import collate_fn
 from src.models.utils import import_gigaam_model
-from gigaam.gigaam.preprocess import FeatureExtractor
-from src.models.utils import get_gigaam_logprobs, get_texts_idxs
+#from gigaam.gigaam.preprocess import FeatureExtractor
+from src.models.utils import get_gigaam_logprobs, get_texts_idxs, get_model_vocab
 
 import torch
 import torch.nn as nn
@@ -34,7 +34,7 @@ class GigaAMTrainer:
         learning_rate: float = 1e-4,
         warmup_steps: int = 1000,
         max_steps: int = 100000,
-        batch_size: int = 8,
+        batch_size: int = 1,
         accumulation_steps: int = 4,
         save_steps: int = 5000,
         eval_steps: int = 1000,
@@ -110,7 +110,7 @@ class GigaAMTrainer:
             eta_min=1e-7
         )
 
-    def train_step(self, batch: Dict) -> float:
+    def train_step(self, batch) -> float:
         """
         Один шаг обучения
        
@@ -120,9 +120,10 @@ class GigaAMTrainer:
         Returns:
             значение loss
         """
-        audios = batch['audio'].to(self.device)
-        audio_lengths = batch['num_samples'].to(self.device)
-        texts = batch['transcription']
+        audios, audio_lengths, texts = batch 
+        #audios = batch['audio'].to(self.device)
+        #audio_lengths = batch['num_samples'].to(self.device)
+        #texts = batch['transcription']
 
         #! temporary disable mixed precision
         # # Forward pass с mixed precision
@@ -142,12 +143,14 @@ class GigaAMTrainer:
         #     # outputs = self.model(audios, audio_lengths)
         #     # loss = self.compute_loss(outputs, texts, audio_lengths)
         #     loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-       
+      
+        model_vocab = get_model_vocab(self.model)
+
         transcript_lengths=(len(sample) for sample in texts)
         loss = self.compute_ctc_loss(
                     audios, 
                     audio_lengths,
-                    get_texts_idxs(texts),
+                    get_texts_idxs(texts, model_vocab),
                     transcript_lengths=tuple(transcript_lengths)
                 )
 
@@ -173,7 +176,8 @@ class GigaAMTrainer:
         # Создание датасетов
         logger.info("Создание датасетов...")
 
-        preprocessor = FeatureExtractor(sample_rate=16000, features=64)
+        #preprocessor = FeatureExtractor(sample_rate=16000, features=64)
+        preprocessor = None
 
         train_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="train")
         train_loader = DataLoader(
@@ -335,11 +339,13 @@ class GigaAMTrainer:
                 #     # loss = self.compute_loss(...)
                 #     loss = torch.tensor(0.0, device=self.device)  # Заглушка
                
+                model_vocab = get_model_vocab(self.model)
+
                 transcript_lengths=(len(sample) for sample in texts)
                 loss = self.compute_ctc_loss(
                             audios, 
                             audio_lengths,
-                            get_texts_idxs(texts),
+                            get_texts_idxs(texts, model_vocab),
                             transcript_lengths=tuple(transcript_lengths)
                         )
 

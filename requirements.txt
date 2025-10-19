@@ -9,3 +9,5 @@ onnx==1.17.0
 onnxruntime==1.17.3
 tqdm
 datasets==3.6.0
+soundfile
+librosa

@@ -110,8 +110,8 @@ def import_gigaam_model(model_type: str="ctc", device: str="cpu"):
     model.load_state_dict(ckpt["state_dict"], strict=False)
     model = model.eval()
 
-    if device.type != "cpu":
-        model.encoder = model.encoder.half()
+    #if device.type != "cpu":
+    #    model.encoder = model.encoder.half()
 
     return model
 
@@ -129,14 +129,14 @@ def get_gigaam_logprobs(model, wav_batch, wav_lengths, return_transcriptions=Fal
     else:
         return logprobs, encoded_len
 
-def get_texts_idxs(texts: List[str], model_vocab: Dict[str][str]) -> torch.Tensor:
+def get_texts_idxs(texts: List[str], model_vocab: Dict[str, str]) -> torch.Tensor:
   texts_idxs = []
   for text in texts:
-    print(f"[DEBUG] {text}")
+    #print(f"[DEBUG] {text}")
 
     text = preprocess_text(text)
 
-    print(f"[DEBUG] preprocessed text: {text}")
+    #print(f"[DEBUG] preprocessed text: {text}")
 
     text_idxs = [model_vocab[sym] for sym in text]
     texts_idxs.append(text_idxs)
