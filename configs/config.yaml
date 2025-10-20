@@ -1,0 +1,19 @@
+defaults:
+  - model: default
+  - data: default
+
+trainer:
+  max_epochs: 10
+  accelerator: auto
+  devices: auto
+  log_every_n_steps: 50
+
+training:
+  batch_size: 32
+  learning_rate: 0.001
+  optimizer: adam
+  weight_decay: 0.01
+
+logging:
+  tensorboard_dir: "logs/tensorboard"
+  local_log_file: "logs/training.log"

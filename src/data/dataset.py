@@ -1,58 +1,45 @@
-from torch.utils.data import Dataset
-import torch
-from datasets import load_dataset
-import logging
-from typing import Dict
+from torch.utils.data import Dataset, DataLoader
+import pytorch_lightning as pl
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+class CTCDataset(Dataset):
+    def __init__(self, data_path, vocab_path):
+        # Ваша реализация датасета
+        pass
 
-#! Сейчас скачивание целевого датасета происходит при инициализации класса
-#! Такой подход чреват большим накладными расходами на загрузку данных, многократным скачиванием и
-#! Хранением большого количетсва данных в оперативной памяти.
-#! Возможно, стоит рассмотреть подход с отдельной загрузкой целевого датасета на локалку и
-#! Извлечение его через манифесты
-class AudioDataset(Dataset):
-    """
-    Датасет для загрузки аудиофайлов и транскрипций
-   
-    Ожидаемый формат данных:
-    - manifest_path: путь к JSON файлу с метаданными
-    - Формат JSON: [{"audio_path": "path/to/audio.wav", "text": "транскрипция"}, ...]
-    """
-   
-    def __init__(self, preprocessor, dataset_part: str="train"):
-       self.dataset = load_dataset("google/fleurs", "ru_ru")
-       if dataset_part == "train":
-        self.dataset = self.dataset['train']
-       elif dataset_part == "validation":
-        self.dataset = self.dataset['validation']
-       else: 
-          self.dataset = self.dataset['test']
-        
-       self.preprocessor = preprocessor
-   
-    def __len__(self) -> int:
-        return len(self.dataset)
-   
-    def __getitem__(self, idx: int) -> Dict:
-        sample = self.dataset[idx]
+    def __len__(self):
+        pass
 
-        # mel_spec_signal, signal_len = self.preprocessor(
-        #    torch.tensor(sample['audio']['array'], dtype=torch.float32),
-        #    torch.tensor(sample['num_samples'], dtype=torch.int32)
-        # )
+    def __getitem__(self, idx):
+        # Возвращает (features, labels, input_length, target_length)
+        pass
 
-        # return {
-        #     'audio': mel_spec_signal,
-        #     'num_samples': signal_len,
-        #     'transcription': sample['transcription'],
-        # }
+class CTCDataModule(pl.LightningDataModule):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
 
-        #! We actually don't need to apply a preprocessor to the data, because
-        #! in the this preprocessor is already in vanilla model
-        return {
-            'audio': torch.tensor(sample['audio']['array'], dtype=torch.float32),
-            'num_samples': torch.tensor(sample['num_samples'], dtype=torch.int32),
-            'transcription': sample['transcription'],
-        }
+    def setup(self, stage=None):
+        self.train_dataset = CTCDataset(
+            self.config.data.dataset.train_path,
+            self.config.data.dataset.vocab_path
+        )
+        self.val_dataset = CTCDataset(
+            self.config.data.dataset.val_path,
+            self.config.data.dataset.vocab_path
+        )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.config.training.batch_size,
+            shuffle=True,
+            num_workers=4
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.config.training.batch_size,
+            shuffle=False,
+            num_workers=4
+        )

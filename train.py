@@ -1,34 +1,70 @@
-from src.models.trainer import GigaAMTrainer
-from utils import fix_torch_seed
-
+import hydra
+from omegaconf import DictConfig
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import TensorBoardLogger
 import logging
+import os
 
-#TODO: проверить настройку логгера, в случае необходимости настроить его по своему
-# Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+from models.ctc_model import CTCLightningModule
+from data.datasets import CTCDataModule
 
-def main():
-    fix_torch_seed()
-    
-    # Конфигурация обучения
-    trainer = GigaAMTrainer(
-        model_type="ctc",  # или "ctc", "rnnt" для fine-tuning
-        output_dir="./gigaam_checkpoints",
-        learning_rate=1e-4,
-        warmup_steps=1000,
-        max_steps=50000,
-        batch_size=1,
-        accumulation_steps=4,
-        save_steps=5000,
-        eval_steps=1000,
-        fp16=True,
-        num_workers=1,
-        max_epochs=10,
+# Настройка локального логирования
+def setup_logging(log_file):
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
     )
-   
+
+@hydra.main(config_path="config", config_name="config")
+def main(cfg: DictConfig):
+    # Инициализация логирования
+    setup_logging(cfg.logging.local_log_file)
+    logger = logging.getLogger(__name__)
+    
+    # Логирование конфигурации
+    logger.info("Starting training with config:")
+    logger.info(cfg)
+
+    # Инициализация данных
+    data_module = CTCDataModule(cfg)
+    
+    # Инициализация модели
+    model = CTCLightningModule(cfg, vocab_size=1000)  # vocab_size должен быть из конфига или датасета
+
+    # Логгер для TensorBoard
+    tb_logger = TensorBoardLogger(
+        save_dir=cfg.logging.tensorboard_dir,
+        name="ctc_model"
+    )
+
+    # Callbacks
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        monitor='val_loss',
+        dirpath='checkpoints',
+        filename='ctc-best-{epoch:02d}-{val_loss:.2f}',
+        save_top_k=1,
+        mode='min'
+    )
+
+    # Trainer
+    trainer = pl.Trainer(
+        max_epochs=cfg.trainer.max_epochs,
+        accelerator=cfg.trainer.accelerator,
+        devices=cfg.trainer.devices,
+        log_every_n_steps=cfg.trainer.log_every_n_steps,
+        logger=tb_logger,
+        callbacks=[checkpoint_callback]
+    )
+
     # Запуск обучения
-    trainer.train()
+    logger.info("Starting training...")
+    trainer.fit(model, data_module)
+    logger.info("Training completed!")
 
 if __name__ == "__main__":
     main()
