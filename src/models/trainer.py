@@ -19,8 +19,19 @@ import torch.nn.functional as F
 import logging
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+local_logger = logging.getLogger("gigaam_logger")
+local_logger.setLevel(logging.INFO)
+
+# Создание файлового обработчика
+file_handler = logging.FileHandler("local_log.log")
+file_handler.setLevel(logging.INFO)
+
+# Форматирование
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+
+# Добавление обработчика к логгеру
+local_logger.addHandler(file_handler)
 
 class GigaAMTrainer:
     """
