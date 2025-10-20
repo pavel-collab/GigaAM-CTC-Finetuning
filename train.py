@@ -23,7 +23,8 @@ def main():
         save_steps=5000,
         eval_steps=1000,
         fp16=True,
-        num_workers=4,
+        num_workers=1,
+        max_epochs=10,
     )
    
     # Запуск обучения

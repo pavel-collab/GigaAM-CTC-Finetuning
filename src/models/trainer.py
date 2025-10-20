@@ -3,6 +3,8 @@ from src.data.utils import collate_fn
 from src.models.utils import import_gigaam_model
 #from gigaam.gigaam.preprocess import FeatureExtractor
 from src.models.utils import get_gigaam_logprobs, get_texts_idxs, get_model_vocab
+import logging
+import sys
 
 import torch
 import torch.nn as nn
@@ -13,25 +15,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from typing import Dict
 from pathlib import Path
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 import json
 import torch.nn.functional as F
+import warnings
 
-import logging
-
-# Настройка логирования
-local_logger = logging.getLogger("gigaam_logger")
-local_logger.setLevel(logging.INFO)
-
-# Создание файлового обработчика
-file_handler = logging.FileHandler("local_log.log")
-file_handler.setLevel(logging.INFO)
-
-# Форматирование
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-
-# Добавление обработчика к логгеру
-local_logger.addHandler(file_handler)
+# turn off the UserWarnings because lots of them are talking about
+# library function refactoring, last or future deprecations
+warnings.filterwarnings('ignore', category=UserWarning)
 
 class GigaAMTrainer:
     """
@@ -45,6 +36,7 @@ class GigaAMTrainer:
         learning_rate: float = 1e-4,
         warmup_steps: int = 1000,
         max_steps: int = 100000,
+        max_epochs: int = 10,
         batch_size: int = 1,
         accumulation_steps: int = 4,
         save_steps: int = 5000,
@@ -81,15 +73,33 @@ class GigaAMTrainer:
         self.save_steps = save_steps
         self.eval_steps = eval_steps
         self.num_workers = num_workers
+        self.max_epochs = max_epochs
+
+        # Настройка логирования
+        self.logging_steps: int = 100
+        self.save_total_limit: int = 5
+
+        self.setup_logging()
+
+        # Логгеры
+        self.setup_loggers()
+       
+        # Счетчики
+        self.global_step = 0
+        self.current_epoch = 0
+        self.best_val_loss = float('inf')
        
         # Определение устройства
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"Использование устройства: {self.device}")
+        self.logger.info(f"Использование устройства: {self.device}")
+        self.logger.info(f"Количесво эпох: {self.max_epochs}")
        
         # Загрузка модели
-        logger.info(f"Загрузка модели gigaam типа {model_type}...")
+        self.logger.info(f"Загрузка модели gigaam типа {model_type}...")
         self.model = import_gigaam_model(self.model_type, self.device)
 
+        self.model.to(self.device)
+        
         #! Temporary disable mixed procision       
         # # Настройка mixed precision
         # self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
@@ -102,6 +112,63 @@ class GigaAMTrainer:
         # Счетчики
         self.global_step = 0
         self.current_epoch = 0
+
+    def setup_logging(self):
+        """Настройка логирования"""
+        log_file = self.output_dir / "training.log"
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+        # Создание файлового обработчика
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+
+        # Форматирование
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+
+        # Добавление обработчика к логгеру
+        self.logger.addHandler(file_handler)
+   
+    def setup_loggers(self):
+        """Настройка TensorBoard"""
+        self.tb_writer = None
+       
+        tb_dir = self.output_dir / "tensorboard"
+        tb_dir.mkdir(exist_ok=True)
+        self.tb_writer = SummaryWriter(tb_dir)
+        self.logger.info(f"TensorBoard логи: {tb_dir}")
+
+    def log_metrics(self, metrics: Dict, step: int, prefix: str = ""):
+        """
+        Логирование метрик в консоль, TensorBoard и W&B
+       
+        Args:
+            metrics: словарь с метриками {"metric_name": value, ...}
+            step: номер шага/эпохи
+            prefix: префикс для организации метрик (например "train", "val")
+        """
+        # Консоль
+        metrics_str = " - ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
+                                 for k, v in metrics.items()])
+        self.logger.info(f"Шаг {step} [{prefix}] - {metrics_str}")
+       
+        # TensorBoard - добавление каждой метрики отдельно
+        if self.tb_writer:
+            for metric_name, metric_value in metrics.items():
+                # Создаем полное имя метрики: prefix/metric_name
+                full_name = f"{prefix}/{metric_name}" if prefix else metric_name
+               
+                # Добавляем в TensorBoard
+                if isinstance(metric_value, (int, float)):
+                    self.tb_writer.add_scalar(full_name, metric_value, step)
+                    # Опционально: логируем значение в консоль для отладки
+                    if step % 100 == 0:  # Каждые 100 шагов
+                        self.logger.debug(f"TensorBoard: {full_name} = {metric_value:.4f}(step {step})")
+           
+            # Принудительно флешируем писатель для гарантированного сохранения
+            self.tb_writer.flush()
 
     def setup_optimizer(self):
         """Настройка оптимизатора и планировщика"""
@@ -131,7 +198,8 @@ class GigaAMTrainer:
         Returns:
             значение loss
         """
-        audios, audio_lengths, texts = batch 
+        audios, audio_lengths, texts = batch
+        
         #audios = batch['audio'].to(self.device)
         #audio_lengths = batch['num_samples'].to(self.device)
         #texts = batch['transcription']
@@ -160,6 +228,7 @@ class GigaAMTrainer:
         texts = get_texts_idxs(texts, model_vocab)
 
         transcript_lengths=(len(sample) for sample in texts)
+        #! forward pass находится внутри этой функции compute_ctc_loss. Согласен, с точки зрения архитектуры -- не очень, но пока работаем так
         loss = self.compute_ctc_loss(
                     audios, 
                     audio_lengths,
@@ -187,7 +256,7 @@ class GigaAMTrainer:
             val_manifest: путь к манифесту валидационных данных
         """
         # Создание датасетов
-        logger.info("Создание датасетов...")
+        self.logger.info("Создание датасетов...")
 
         #preprocessor = FeatureExtractor(sample_rate=16000, features=64)
         preprocessor = None
@@ -218,15 +287,15 @@ class GigaAMTrainer:
         # Режим тренировки
         self.model.train()
 
-        logger.info("Начало обучения...")
-        logger.info(f"Батч размер: {self.batch_size}")
-        logger.info(f"Градиентная аккумуляция: {self.accumulation_steps}")
-        logger.info(f"Эффективный батч размер: {self.batch_size * self.accumulation_steps}")
+        self.logger.info("Начало обучения...")
+        self.logger.info(f"Батч размер: {self.batch_size}")
+        self.logger.info(f"Градиентная аккумуляция: {self.accumulation_steps}")
+        self.logger.info(f"Эффективный батч размер: {self.batch_size * self.accumulation_steps}")
        
         running_loss = 0.0
         self.optimizer.zero_grad()
        
-        while self.global_step < self.max_steps:
+        while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
             self.current_epoch += 1
            
             pbar = tqdm(train_loader, desc=f"Эпоха {self.current_epoch}")
@@ -261,33 +330,37 @@ class GigaAMTrainer:
                     self.global_step += 1
                    
                     # Логирование
-                    avg_loss = running_loss / self.accumulation_steps
-                    current_lr = self.optimizer.param_groups[0]['lr']
-                    pbar.set_postfix({
-                        'loss': f'{avg_loss:.4f}',
-                        'lr': f'{current_lr:.2e}',
-                        'step': self.global_step
-                    })
-                    running_loss = 0.0
-                   
-                   #TODO: сделать отдельную механику, которая будет рисовать графики
+                    # Логирование
+                    if self.global_step % self.logging_steps == 0:
+                        avg_loss = running_loss / self.accumulation_steps
+                        lr = self.optimizer.param_groups[0]['lr']
+                    
+                        metrics = {
+                            'loss': avg_loss,
+                            'lr': lr,
+                        }
+                        self.log_metrics(metrics, self.global_step, "train")
+                        pbar.set_postfix(metrics)
+                        running_loss = 0.0
+                
                     # Валидация
-                    if val_loader and self.global_step % self.eval_steps == 0:
-                        val_loss = self.validate(val_loader)
-                        logger.info(f"Шаг {self.global_step}: Val Loss = {val_loss:.4f}")
-                        self.model.train()
-                   
+                    if self.global_step % self.eval_steps == 0:
+                        self.logger.info(f"Валидация на шаге {self.global_step}...")
+                        # val_loss = self.validate(val_loader)
+                        # self.log_metrics({'loss': val_loss}, self.global_step, "val")
+                
                     # Сохранение чекпоинта
                     if self.global_step % self.save_steps == 0:
                         self.save_checkpoint()
-                   
-                    if self.global_step >= self.max_steps:
-                        break
+
+                    running_loss = 0.0
+
+            self.validate(val_loader)
            
             if self.global_step >= self.max_steps:
                 break
        
-        logger.info("Обучение завершено!")
+        self.logger.info("Обучение завершено!")
         self.save_checkpoint(name="final_model")
 
     #! На данный момент с ctc_loss есть определенные проблемы
@@ -297,7 +370,7 @@ class GigaAMTrainer:
     #! Или считать функцию потерь MSE через логиты    
     def compute_ctc_loss(self, wav_batch, wav_lengths, transcripts, transcript_lengths):
         # Получаем логиты от модели
-        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch.to(self.device), wav_lengths.to(self.device))
 
         '''
         print(f"[DEBUG] transcripts shape {transcripts.shape}")
@@ -307,7 +380,7 @@ class GigaAMTrainer:
         '''
 
         # Проверяем и выравниваем длины
-        encoded_len = tuple(encoded_len.numpy())
+        encoded_len = tuple(encoded_len.to('cpu').numpy())
         
         # Убеждаемся, что encoded_len не превышает длину logprobs по времени
         T = logprobs.size(1)  # временная размерность после transpose
@@ -319,7 +392,7 @@ class GigaAMTrainer:
         logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
 
         BLANK_IDX = 33
-        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
+        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True).to(self.device)
 
         # Вычисляем потерю
         loss = ctc_loss(
@@ -344,13 +417,19 @@ class GigaAMTrainer:
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+
+        val_metrics = {}
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Валидация"):
+                audios, audio_lengths, texts = batch
+
+                '''
                 audios = batch['audio'].to(self.device)
                 audio_lengths = batch['num_samples'].to(self.device)
                 texts = batch['transcription']
-               
+               '''
+
                 #! mixed precision is temporary disabled
                 # if self.use_amp:
                 #     with torch.cuda.amp.autocast():
@@ -373,6 +452,14 @@ class GigaAMTrainer:
 
                 total_loss += loss.item()
                 num_batches += 1
+
+        avg_val_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        val_metrics['loss'] = avg_val_loss
+
+        # Логирование метрик валидации в TensorBoard
+        self.log_metrics(val_metrics, self.global_step, "val")
+       
+        self.model.train()
        
         return total_loss / num_batches if num_batches > 0 else 0.0
     
@@ -409,7 +496,7 @@ class GigaAMTrainer:
         with open(checkpoint_path / "training_config.json", 'w') as f:
             json.dump(config, f, indent=2)
        
-        logger.info(f"Чекпоинт сохранен: {checkpoint_path}")
+        self.logger.info(f"Чекпоинт сохранен: {checkpoint_path}")
 
     def load_checkpoint(self, checkpoint_path: str):
         """
@@ -430,5 +517,5 @@ class GigaAMTrainer:
         self.global_step = checkpoint['global_step']
         self.current_epoch = checkpoint['epoch']
        
-        logger.info(f"Чекпоинт загружен из {checkpoint_path}")
-        logger.info(f"Продолжение с шага {self.global_step}, эпоха {self.current_epoch}")
+        self.logger.info(f"Чекпоинт загружен из {checkpoint_path}")
+        self.logger.info(f"Продолжение с шага {self.global_step}, эпоха {self.current_epoch}")
