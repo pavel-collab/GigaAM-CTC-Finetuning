@@ -6,12 +6,6 @@ from src.models.utils import get_gigaam_logprobs, get_texts_idxs, get_model_voca
 import logging
 import sys
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-    TENSORBOARD_AVAILABLE = True
-except ImportError:
-    TENSORBOARD_AVAILABLE = False
-
 import torch
 import torch.nn as nn
 import torch
@@ -21,8 +15,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from typing import Dict
 from pathlib import Path
 from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
 import json
 import torch.nn.functional as F
+import warnings
+
+# turn off the UserWarnings because lots of them are talking about
+# library function refactoring, last or future deprecations
+warnings.filterwarnings('ignore', category=UserWarning)
 
 class GigaAMTrainer:
     """
@@ -98,6 +98,8 @@ class GigaAMTrainer:
         self.logger.info(f"Загрузка модели gigaam типа {model_type}...")
         self.model = import_gigaam_model(self.model_type, self.device)
 
+        self.model.to(self.device)
+        
         #! Temporary disable mixed procision       
         # # Настройка mixed precision
         # self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
@@ -114,16 +116,20 @@ class GigaAMTrainer:
     def setup_logging(self):
         """Настройка логирования"""
         log_file = self.output_dir / "training.log"
-       
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler(sys.stdout)
-            ]
-        )
+
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
+        # Создание файлового обработчика
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+
+        # Форматирование
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+
+        # Добавление обработчика к логгеру
+        self.logger.addHandler(file_handler)
    
     def setup_loggers(self):
         """Настройка TensorBoard"""
@@ -192,7 +198,8 @@ class GigaAMTrainer:
         Returns:
             значение loss
         """
-        audios, audio_lengths, texts = batch 
+        audios, audio_lengths, texts = batch
+        
         #audios = batch['audio'].to(self.device)
         #audio_lengths = batch['num_samples'].to(self.device)
         #texts = batch['transcription']
@@ -325,7 +332,7 @@ class GigaAMTrainer:
                     # Логирование
                     # Логирование
                     if self.global_step % self.logging_steps == 0:
-                        avg_loss = running_loss / self.config.accumulation_steps
+                        avg_loss = running_loss / self.accumulation_steps
                         lr = self.optimizer.param_groups[0]['lr']
                     
                         metrics = {
@@ -343,7 +350,7 @@ class GigaAMTrainer:
                         # self.log_metrics({'loss': val_loss}, self.global_step, "val")
                 
                     # Сохранение чекпоинта
-                    if self.global_step % self.config.save_steps == 0:
+                    if self.global_step % self.save_steps == 0:
                         self.save_checkpoint()
 
                     running_loss = 0.0
@@ -363,7 +370,7 @@ class GigaAMTrainer:
     #! Или считать функцию потерь MSE через логиты    
     def compute_ctc_loss(self, wav_batch, wav_lengths, transcripts, transcript_lengths):
         # Получаем логиты от модели
-        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch.to(self.device), wav_lengths.to(self.device))
 
         '''
         print(f"[DEBUG] transcripts shape {transcripts.shape}")
@@ -373,7 +380,7 @@ class GigaAMTrainer:
         '''
 
         # Проверяем и выравниваем длины
-        encoded_len = tuple(encoded_len.numpy())
+        encoded_len = tuple(encoded_len.to('cpu').numpy())
         
         # Убеждаемся, что encoded_len не превышает длину logprobs по времени
         T = logprobs.size(1)  # временная размерность после transpose
@@ -385,7 +392,7 @@ class GigaAMTrainer:
         logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
 
         BLANK_IDX = 33
-        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
+        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True).to(self.device)
 
         # Вычисляем потерю
         loss = ctc_loss(
@@ -415,10 +422,14 @@ class GigaAMTrainer:
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Валидация"):
+                audios, audio_lengths, texts = batch.to(self.device)
+
+                '''
                 audios = batch['audio'].to(self.device)
                 audio_lengths = batch['num_samples'].to(self.device)
                 texts = batch['transcription']
-               
+               '''
+
                 #! mixed precision is temporary disabled
                 # if self.use_amp:
                 #     with torch.cuda.amp.autocast():

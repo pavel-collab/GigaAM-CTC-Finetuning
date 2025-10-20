@@ -13,3 +13,4 @@ soundfile
 librosa
 pywer
 tensorboard
+psutil
