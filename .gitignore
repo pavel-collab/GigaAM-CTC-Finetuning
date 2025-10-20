@@ -2,3 +2,4 @@ venv
 .idea
 __pycache__
 gigaam_checkoints
+tmp.py

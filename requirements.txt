@@ -11,3 +11,4 @@ tqdm
 datasets==3.6.0
 soundfile
 librosa
+pywer
