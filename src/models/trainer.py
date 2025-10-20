@@ -422,7 +422,7 @@ class GigaAMTrainer:
         
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Валидация"):
-                audios, audio_lengths, texts = batch.to(self.device)
+                audios, audio_lengths, texts = batch
 
                 '''
                 audios = batch['audio'].to(self.device)
