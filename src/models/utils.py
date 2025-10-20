@@ -1,4 +1,4 @@
-from src.data.utils import preprocess_text
+from src.data.preprocess import preprocess_text
 
 from gigaam import GigaAMASR
 import gigaam

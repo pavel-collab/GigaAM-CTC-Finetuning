@@ -281,24 +281,24 @@ class GigaAMTrainer:
     #! Там нужно подавать на вход индексы для токенов транскрипции в словаре модели,
     #! Но там в словаре только обычные русские буквы, нет символов типо : и др
     #! Как вариант, можно убирать все символы нерусского алфавита из строчки транскрипции,
-    #! Или считать функцию потерь MSE через логиты
+    #! Или считать функцию потерь MSE через логиты    
     def compute_ctc_loss(self, wav_batch, wav_lengths, transcripts, transcript_lengths):
         # Получаем логиты от модели
         logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
-        
-        #! Some troubles may be here if batch size is not equal to 1
-        encoded_len = tuple(encoded_len.numpy())
 
-        # CTCLoss требует логиты в формате (T, N, C)
-        # Где T - временная длина, N - размер батча, C - число классов
-        logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
+        # Проверяем и выравниваем длины
+        encoded_len = tuple(encoded_len.numpy())
         
-        # Инициализируем CTC Loss
-        # ctc_loss = nn.CTCLoss(blank=self.model.decoding.blank_id, reduction='mean', zero_infinity=True)
-        #! Here can be an error
+        # Убеждаемся, что encoded_len не превышает длину logprobs по времени
+        T = logprobs.size(1)  # временная размерность после transpose
+        encoded_len = tuple(min(el, T) for el in encoded_len)
+        
+        # CTCLoss требует логиты в формате (T, N, C)
+        logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
+
         BLANK_IDX = 33
         ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
-        
+
         # Вычисляем потерю
         loss = ctc_loss(
             logprobs,           # (T, N, C)
@@ -306,7 +306,7 @@ class GigaAMTrainer:
             encoded_len,        # (N,) -> длины выходных последовательностей
             transcript_lengths  # (N,) -> длины целевых последовательностей
         )
-        
+
         return loss
 
     def validate(self, val_loader: DataLoader) -> float:
