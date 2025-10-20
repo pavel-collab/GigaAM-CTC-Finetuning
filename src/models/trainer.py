@@ -146,11 +146,13 @@ class GigaAMTrainer:
       
         model_vocab = get_model_vocab(self.model)
 
+        texts = get_texts_idxs(texts, model_vocab)
+
         transcript_lengths=(len(sample) for sample in texts)
         loss = self.compute_ctc_loss(
                     audios, 
                     audio_lengths,
-                    get_texts_idxs(texts, model_vocab),
+                    texts,
                     transcript_lengths=tuple(transcript_lengths)
                 )
 
@@ -286,6 +288,13 @@ class GigaAMTrainer:
         # Получаем логиты от модели
         logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch, wav_lengths)
 
+        '''
+        print(f"[DEBUG] transcripts shape {transcripts.shape}")
+        print(f"[DEBUG] transcripts_lengths {transcript_lengths}")
+        print(f"[DEBUG] logprobs shape {logprobs.shape}")
+        print(f"[DEBUG] logprobs len {encoded_len}")
+        '''
+
         # Проверяем и выравниваем длины
         encoded_len = tuple(encoded_len.numpy())
         
@@ -293,6 +302,8 @@ class GigaAMTrainer:
         T = logprobs.size(1)  # временная размерность после transpose
         encoded_len = tuple(min(el, T) for el in encoded_len)
         
+        #print(f"[DEBUG] new logprobs len {encoded_len}")
+
         # CTCLoss требует логиты в формате (T, N, C)
         logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
 
@@ -339,12 +350,13 @@ class GigaAMTrainer:
                 #     loss = torch.tensor(0.0, device=self.device)  # Заглушка
                
                 model_vocab = get_model_vocab(self.model)
+                texts = get_texts_idxs(texts, model_vocab)
 
                 transcript_lengths=(len(sample) for sample in texts)
                 loss = self.compute_ctc_loss(
                             audios, 
                             audio_lengths,
-                            get_texts_idxs(texts, model_vocab),
+                            texts,
                             transcript_lengths=tuple(transcript_lengths)
                         )
 
