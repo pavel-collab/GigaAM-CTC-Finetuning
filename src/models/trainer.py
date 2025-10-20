@@ -477,6 +477,7 @@ class GigaAMTrainer:
         checkpoint_path.mkdir(parents=True, exist_ok=True)
        
         # Сохранение state dict модели
+        '''
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -484,10 +485,12 @@ class GigaAMTrainer:
             'global_step': self.global_step,
             'epoch': self.current_epoch,
         }, checkpoint_path / "pytorch_model.bin")
+        '''
+        torch.save(self.model.state_dict(), checkpoint_path / 'gigaam_weights.pth')
        
         # Сохранение конфигурации
         config = {
-            'model_name': self.model_name,
+            'model_name': self.model_type,
             'global_step': self.global_step,
             'epoch': self.current_epoch,
             'learning_rate': self.learning_rate,
@@ -509,6 +512,7 @@ class GigaAMTrainer:
        
         self.model.load_state_dict(checkpoint['model_state_dict'])
        
+        '''
         if self.optimizer:
             self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         if self.scheduler:
@@ -516,6 +520,7 @@ class GigaAMTrainer:
        
         self.global_step = checkpoint['global_step']
         self.current_epoch = checkpoint['epoch']
-       
+        '''
+        
         self.logger.info(f"Чекпоинт загружен из {checkpoint_path}")
         self.logger.info(f"Продолжение с шага {self.global_step}, эпоха {self.current_epoch}")
