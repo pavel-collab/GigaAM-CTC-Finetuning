@@ -189,7 +189,6 @@ class GigaAMTrainer:
             # pin_memory=True if torch.cuda.is_available() else False
         )
        
-        val_loader = None
         val_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="validation")
         val_loader = DataLoader(
             val_dataset,

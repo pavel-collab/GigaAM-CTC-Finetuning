@@ -1,4 +1,5 @@
 from src.models.trainer import GigaAMTrainer
+from utils import fix_torch_seed
 
 import logging
 
@@ -8,9 +9,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 def main():
-    """
-    Пример использования
-    """
+    fix_torch_seed()
+    
     # Конфигурация обучения
     trainer = GigaAMTrainer(
         model_type="ctc",  # или "ctc", "rnnt" для fine-tuning
