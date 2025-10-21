@@ -5,14 +5,21 @@ from src.data.utils import collate_fn
 
 from torch.utils.data import DataLoader
 import argparse
+import torch
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--checkpoint_path', type=str, default=None, help='set a path to a saved checkpoint')
     args = parser.parse_args()
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     checkpoint_path = args.checkpoint_path
-    model = import_gigaam_model(checkpoint_path=checkpoint_path)
+    model = import_gigaam_model(
+                model_type='ctc',
+                checkpoint_path=checkpoint_path,
+                device=device
+            )
 
     val_dataset = AudioDataset(preprocessor=None, dataset_part="validation")
     val_loader = DataLoader(
