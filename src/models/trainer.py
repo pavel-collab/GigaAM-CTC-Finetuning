@@ -3,8 +3,13 @@ from src.data.utils import collate_fn
 from src.models.utils import import_gigaam_model
 #from gigaam.gigaam.preprocess import FeatureExtractor
 from src.models.utils import get_gigaam_logprobs, get_texts_idxs, get_model_vocab
+from src.utils.freeze_weights import (
+    freeze_model_completely,
+    freeze_model_selective,
+    freeze_by_components
+)
+
 import logging
-import sys
 
 import torch
 import torch.nn as nn
@@ -99,6 +104,13 @@ class GigaAMTrainer:
         self.model = import_gigaam_model(model_type=self.model_type, device=self.device)
 
         self.model.to(self.device)
+
+        # замораживаем веса
+        freeze_model_completely(self.model)
+        # freeze_model_selective(self.model)
+        # freeze_by_components(self.model)
+
+        self.print_frozen_stats()
         
         #! Temporary disable mixed procision       
         # # Настройка mixed precision
@@ -502,3 +514,20 @@ class GigaAMTrainer:
             json.dump(config, f, indent=2)
        
         self.logger.info(f"Чекпоинт сохранен: {checkpoint_path}")
+
+    def print_frozen_stats(self):
+        total_params = 0
+        frozen_params = 0
+        
+        for name, param in self.model.named_parameters():
+            total_params += param.numel()
+            if not param.requires_grad:
+                frozen_params += param.numel()
+                self.logger.info(f"❌ Заморожен: {name}")
+            else:
+                self.logger.info(f"✅ Разморожен: {name}")
+        
+        self.logger.info(f"\n📊 Статистика:")
+        self.logger.info(f"Всего параметров: {total_params:,}")
+        self.logger.info(f"Заморожено: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+        self.logger.info(f"Обучается: {total_params-frozen_params:,} ({(total_params-frozen_params)/total_params*100:.1f}%)")
