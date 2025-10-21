@@ -34,7 +34,7 @@ def calculate_wer_on_dataset(model, dataloader, return_transcriptions=False):
         wav_batch, wav_lengths, texts = batch
         logprobs, lengths, transcriptions = get_gigaam_logprobs(model, wav_batch, wav_lengths, return_transcriptions=True)
         
-        text = preprocess_text(text)
+        texts = [preprocess_text(text) for text in texts]
 
         references.extend(texts)
         hypotheses.extend(transcriptions)

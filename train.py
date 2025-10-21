@@ -15,7 +15,7 @@ def main():
     trainer = GigaAMTrainer(
         model_type="ctc",  # или "ctc", "rnnt" для fine-tuning
         output_dir="./gigaam_checkpoints",
-        learning_rate=1e-4,
+        learning_rate=1e-5,
         warmup_steps=1000,
         max_steps=50000,
         batch_size=1,
@@ -24,7 +24,7 @@ def main():
         eval_steps=1000,
         fp16=True,
         num_workers=4,
-        max_epochs=2,
+        max_epochs=5,
     )
    
     # Запуск обучения
