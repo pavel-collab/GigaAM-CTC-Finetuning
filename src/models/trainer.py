@@ -350,8 +350,9 @@ class GigaAMTrainer:
                         # self.log_metrics({'loss': val_loss}, self.global_step, "val")
                 
                     # Сохранение чекпоинта
-                    if self.global_step % self.save_steps == 0:
-                        self.save_checkpoint()
+                    #! temporarry comment this line, cause of no so much free space on my test device
+                    # if self.global_step % self.save_steps == 0:
+                    #     self.save_checkpoint()
 
                     running_loss = 0.0
 
@@ -360,8 +361,9 @@ class GigaAMTrainer:
             if self.global_step >= self.max_steps:
                 break
        
-        self.logger.info("Обучение завершено!")
+        self.logger.info("Сохранение финального чекпоинта...")
         self.save_checkpoint(name="final_model")
+        self.logger.info("Обучение завершено!")
 
     #! На данный момент с ctc_loss есть определенные проблемы
     #! Там нужно подавать на вход индексы для токенов транскрипции в словаре модели,
