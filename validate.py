@@ -4,10 +4,15 @@ from src.data.dataset import AudioDataset
 from src.data.utils import collate_fn
 
 from torch.utils.data import DataLoader
+import argparse
 
 if __name__ == '__main__':
-    #TODO: позже здесь нужно будет написать импорт модели с определенного чекпоинта
-    model = import_gigaam_model()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--checkpoint_path', type=str, default=None, help='set a path to a saved checkpoint')
+    args = parser.parse_args()
+
+    checkpoint_path = args.checkpoint_path
+    model = import_gigaam_model(checkpoint_path=checkpoint_path)
 
     val_dataset = AudioDataset(preprocessor=None, dataset_part="validation")
     val_loader = DataLoader(

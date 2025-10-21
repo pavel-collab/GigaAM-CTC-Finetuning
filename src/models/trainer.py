@@ -502,27 +502,3 @@ class GigaAMTrainer:
             json.dump(config, f, indent=2)
        
         self.logger.info(f"Чекпоинт сохранен: {checkpoint_path}")
-
-    def load_checkpoint(self, checkpoint_path: str):
-        """
-        Загрузка чекпоинта
-       
-        Args:
-            checkpoint_path: путь к чекпоинту
-        """
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
-       
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-       
-        '''
-        if self.optimizer:
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if self.scheduler:
-            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-       
-        self.global_step = checkpoint['global_step']
-        self.current_epoch = checkpoint['epoch']
-        '''
-        
-        self.logger.info(f"Чекпоинт загружен из {checkpoint_path}")
-        self.logger.info(f"Продолжение с шага {self.global_step}, эпоха {self.current_epoch}")
