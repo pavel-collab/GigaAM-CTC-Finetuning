@@ -15,10 +15,7 @@ def import_gigaam_model(model_type: str="ctc", checkpoint_path: str=None, device
     CACHE_DIR = os.path.expanduser("~/.cache/gigaam")
     model_name, model_path = gigaam._download_model(model_type, CACHE_DIR)
 
-    if checkpoint_path is not None:
-        ckpt = torch.load(checkpoint_path, map_location=device)
-    else:
-        ckpt = torch.load(model_path, map_location=device, weights_only=False)
+    ckpt = torch.load(model_path, map_location=device, weights_only=False)
 
     ckpt["cfg"].encoder.flash_attn = False
     model = GigaAMASR(ckpt['cfg'])
@@ -26,8 +23,14 @@ def import_gigaam_model(model_type: str="ctc", checkpoint_path: str=None, device
     model.load_state_dict(ckpt["state_dict"], strict=False)
     model = model.eval()
 
+    model.to(device)
+
     #if device.type != "cpu":
     #    model.encoder = model.encoder.half()
+
+    if checkpoint_path is not None:
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint)
 
     return model
 
