@@ -96,7 +96,7 @@ class GigaAMTrainer:
        
         # Загрузка модели
         self.logger.info(f"Загрузка модели gigaam типа {model_type}...")
-        self.model = import_gigaam_model(self.model_type, self.device)
+        self.model = import_gigaam_model(model_type=self.model_type, device=self.device)
 
         self.model.to(self.device)
         
