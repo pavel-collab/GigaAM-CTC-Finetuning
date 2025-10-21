@@ -1,4 +1,5 @@
 from src.models.utils import get_gigaam_logprobs
+from src.data.preprocess import preprocess_text
 
 import random
 import torch
@@ -32,6 +33,9 @@ def calculate_wer_on_dataset(model, dataloader, return_transcriptions=False):
     for batch in tqdm(dataloader):
         wav_batch, wav_lengths, texts = batch
         logprobs, lengths, transcriptions = get_gigaam_logprobs(model, wav_batch, wav_lengths, return_transcriptions=True)
+        
+        text = preprocess_text(text)
+
         references.extend(texts)
         hypotheses.extend(transcriptions)
 
