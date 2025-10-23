@@ -1,5 +1,5 @@
 model:
-  name: "ctc_base"
+  name: "ctc"
   hidden_size: 256
   num_layers: 4
   dropout: 0.1

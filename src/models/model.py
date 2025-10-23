@@ -1,62 +1,62 @@
+from src.models.utils import import_gigaam_model, get_model_vocab, get_texts_idxs, get_gigaam_logprobs
+
 import torch
 import pytorch_lightning as pl
 from torch import nn
 import torch.nn.functional as F
 
 class CTCLightningModule(pl.LightningModule):
-    def __init__(self, config, vocab_size):
+    def __init__(self, config):
         super().__init__()
         self.config = config
-        self.vocab_size = vocab_size
-        
-        # Пример архитектуры модели
-        self.encoder = nn.LSTM(
-            input_size=config.model.input_size,
-            hidden_size=config.model.hidden_size,
-            num_layers=config.model.num_layers,
-            dropout=config.model.dropout,
-            batch_first=True
-        )
-        self.output_layer = nn.Linear(config.model.hidden_size, vocab_size)
-        
+
         # Сохраняем гиперпараметры
         self.save_hyperparameters()
 
-    def forward(self, x):
-        features, _ = self.encoder(x)
-        return self.output_layer(features)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self.model = import_gigaam_model(model_type=self.config.model.name, device=self.device)
 
     def training_step(self, batch, batch_idx):
-        # ЗАГЛУШКА - переопределите этот метод для вашей функции потерь
-        x, y, input_lengths, target_lengths = batch
-        logits = self(x)
-        log_probs = F.log_softmax(logits, dim=-1)
+        audios, audio_lengths, texts = batch
+
+        model_vocab = get_model_vocab(self.model)
+
+        #TODO: maybe move it to the dataloader?
+        texts = get_texts_idxs(texts, model_vocab)
+
+        transcript_lengths=(len(sample) for sample in texts)
+
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, audios.to(self.device), audio_lengths.to(self.device))
+
+        loss =  self._compute_ctc_loss(
+                    logprobs,
+                    encoded_len,
+                    texts,
+                    transcript_lengths=tuple(transcript_lengths)
+                )
         
-        # Здесь должна быть ваша кастомная CTC loss функция
-        loss = self._compute_ctc_loss(
-            log_probs=log_probs,
-            targets=y,
-            input_lengths=input_lengths,
-            target_lengths=target_lengths
-        )
-        
-        self.log('train_loss', loss, prog_bar=True)
-        return loss
+        return loss.item()
 
     def validation_step(self, batch, batch_idx):
-        x, y, input_lengths, target_lengths = batch
-        logits = self(x)
-        log_probs = F.log_softmax(logits, dim=-1)
+        self.model.eval()
+        audios, audio_lengths, texts = batch
         
+        model_vocab = get_model_vocab(self.model)
+        texts = get_texts_idxs(texts, model_vocab)
+
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, audios.to(self.device), audio_lengths.to(self.device))
+
+        transcript_lengths=(len(sample) for sample in texts)
         loss = self._compute_ctc_loss(
-            log_probs=log_probs,
-            targets=y,
-            input_lengths=input_lengths,
-            target_lengths=target_lengths
-        )
+                    logprobs, 
+                    encoded_len,
+                    texts,
+                    transcript_lengths=tuple(transcript_lengths)
+                )
         
-        self.log('val_loss', loss, prog_bar=True)
-        return loss
+        self.model.train()
+        return loss.item()
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
@@ -66,17 +66,26 @@ class CTCLightningModule(pl.LightningModule):
         )
         return optimizer
 
-    def _compute_ctc_loss(self, log_probs, targets, input_lengths, target_lengths):
-        """
-        ЗАГЛУШКА - переопределите этот метод для вашей реализации CTC loss
-        """
-        # Пример стандартной CTC loss
-        loss = F.ctc_loss(
-            log_probs.transpose(0, 1),
-            targets,
-            input_lengths,
-            target_lengths,
-            blank=0,
-            zero_infinity=True
+    def _compute_ctc_loss(self, logprobs, encoded_len, transcripts, transcript_lengths):
+        # Проверяем и выравниваем длины
+        encoded_len = tuple(encoded_len.to('cpu').numpy())
+        
+        # Убеждаемся, что encoded_len не превышает длину logprobs по времени
+        T = logprobs.size(1)  # временная размерность после transpose
+        encoded_len = tuple(min(el, T) for el in encoded_len)
+
+        # CTCLoss требует логиты в формате (T, N, C)
+        logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
+
+        BLANK_IDX = 33
+        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True).to(self.device)
+
+        # Вычисляем потерю
+        loss = ctc_loss(
+            logprobs,           # (T, N, C)
+            transcripts,        # (N, S) -> целочисленные индексы
+            encoded_len,        # (N,) -> длины выходных последовательностей
+            transcript_lengths  # (N,) -> длины целевых последовательностей
         )
+
         return loss

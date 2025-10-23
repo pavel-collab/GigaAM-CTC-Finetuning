@@ -34,7 +34,7 @@ def main(cfg: DictConfig):
     data_module = CTCDataModule(cfg)
     
     # Инициализация модели
-    model = CTCLightningModule(cfg, vocab_size=1000)  # vocab_size должен быть из конфига или датасета
+    model = CTCLightningModule(cfg)  # vocab_size должен быть из конфига или датасета
 
     # Логгер для TensorBoard
     tb_logger = TensorBoardLogger(

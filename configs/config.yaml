@@ -1,6 +1,5 @@
 defaults:
   - model: default
-  - data: default
 
 trainer:
   max_epochs: 10
@@ -13,6 +12,7 @@ training:
   learning_rate: 0.001
   optimizer: adam
   weight_decay: 0.01
+  num_workers: 4
 
 logging:
   tensorboard_dir: "logs/tensorboard"

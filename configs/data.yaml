@@ -1,4 +1,0 @@
-dataset:
-  train_path: "data/train"
-  val_path: "data/val"
-  vocab_path: "data/vocab.txt"
