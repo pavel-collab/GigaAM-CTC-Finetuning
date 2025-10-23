@@ -1,4 +1,4 @@
-from src.data.utils import collate_fn
+from src.data.utils import FunctionFactory
 
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
@@ -23,16 +23,39 @@ class AudioDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict:
         sample = self.dataset[idx]
 
-        return {
-            'audio': torch.tensor(sample['audio']['array'], dtype=torch.float32),
-            'num_samples': torch.tensor(sample['num_samples'], dtype=torch.int32),
-            'transcription': sample['transcription'],
-        }
+        # return {
+        #     'audio': torch.tensor(sample['audio']['array'], dtype=torch.float32),
+        #     'num_samples': torch.tensor(sample['num_samples'], dtype=torch.int32),
+        #     'transcription': sample['transcription'],
+        # }
+
+        # Аудио
+        audio_array = sample['audio']['array']
+        sampling_rate = sample['audio']['sampling_rate']
+        wav = torch.from_numpy(audio_array).float()
+        
+        # Нормализация к моно
+        if wav.dim() > 1:
+            wav = wav.mean(dim=0)
+        
+        # Текст
+        text = self.normalize_fn(sample['transcription'])
+        
+        return wav, text, sampling_rate
 
 class CTCDataModule(pl.LightningDataModule):
-    def __init__(self, config):
+    def __init__(self, config, model_vocab=None):
         super().__init__()
         self.config = config
+
+        self.collate_fn = None
+        fn_factory = FunctionFactory(model_vocabular=model_vocab)
+        if model_vocab is None:
+           self.collate_fn = fn_factory.create_default_collate_function()
+        else:
+           self.collate_fn = fn_factory.create_advanced_collate_function()        
+        assert(self.collate_fn is not None)
+
 
     def setup(self, stage=None):
         self.train_dataset = AudioDataset(dataset_part="train")
@@ -44,7 +67,7 @@ class CTCDataModule(pl.LightningDataModule):
             batch_size=self.config.training.batch_size,
             shuffle=True,
             num_workers=self.config.training.num_workers,
-            collate_fn=collate_fn
+            collate_fn=self.collate_fn
         )
 
         return self.train_loader
@@ -55,7 +78,7 @@ class CTCDataModule(pl.LightningDataModule):
             batch_size=self.config.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=collate_fn
+            collate_fn=self.collate_fn
         )
 
         return self.val_loader

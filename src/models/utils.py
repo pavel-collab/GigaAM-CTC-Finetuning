@@ -51,14 +51,24 @@ def pad_list(nested_list, padding_element=33):
 
     return padded_list
 
-def get_texts_idxs(texts: List[str], model_vocab: Dict[str, str], blank_token=33) -> torch.Tensor:
-  texts_idxs = []
+# def get_texts_idxs(texts: List[str], model_vocab: Dict[str, str], blank_token=33) -> torch.Tensor:
+#   texts_idxs = []
 
-  for text in texts:
-    text = preprocess_text(text)
+#   for text in texts:
+#     text = preprocess_text(text)
 
-    text_idxs = list([model_vocab[sym] for sym in text])
-    texts_idxs.append(text_idxs)
+#     text_idxs = list([model_vocab[sym] for sym in text])
+#     texts_idxs.append(text_idxs)
 
-  texts_idxs = pad_list(texts_idxs, padding_element=blank_token)
-  return torch.tensor(texts_idxs, dtype=torch.int)
+#   texts_idxs = pad_list(texts_idxs, padding_element=blank_token)
+#   return torch.tensor(texts_idxs, dtype=torch.int)
+
+def text_to_indices(text:str, model_vocab: Dict[str, str]):
+    """Конвертация текста в индексы согласно официальному словарю"""
+    indices = []
+    for ch in text:
+        if ch in model_vocab:
+            indices.append(model_vocab[ch])
+        else:
+            print(f"Attention: symbol '{ch}' is not in model vocabular")
+    return indices

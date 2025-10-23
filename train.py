@@ -1,3 +1,6 @@
+from utils import fix_torch_seed
+from src.models.utils import get_model_vocab
+
 import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
@@ -22,6 +25,8 @@ def setup_logging(log_file):
 
 @hydra.main(config_path="config", config_name="config")
 def main(cfg: DictConfig):
+    fix_torch_seed()
+
     # Инициализация логирования
     setup_logging(cfg.logging.local_log_file)
     logger = logging.getLogger(__name__)
@@ -30,11 +35,14 @@ def main(cfg: DictConfig):
     logger.info("Starting training with config:")
     logger.info(cfg)
 
-    # Инициализация данных
-    data_module = CTCDataModule(cfg)
-    
     # Инициализация модели
     model = CTCLightningModule(cfg)  # vocab_size должен быть из конфига или датасета
+
+    # Получаем словарь модели
+    model_vocab = get_model_vocab(model.model)
+
+    # Инициализация данных
+    data_module = CTCDataModule(cfg, model_vocab=model_vocab, logger=logger)
 
     # Логгер для TensorBoard
     tb_logger = TensorBoardLogger(

@@ -3,12 +3,13 @@ from src.models.utils import import_gigaam_model, get_model_vocab, get_texts_idx
 import torch
 import pytorch_lightning as pl
 from torch import nn
-import torch.nn.functional as F
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 
 class CTCLightningModule(pl.LightningModule):
-    def __init__(self, config):
+    def __init__(self, config, logger):
         super().__init__()
         self.config = config
+        self.logger = logger
 
         # Сохраняем гиперпараметры
         self.save_hyperparameters()
@@ -16,6 +17,30 @@ class CTCLightningModule(pl.LightningModule):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.model = import_gigaam_model(model_type=self.config.model.name, device=self.device)
+
+        self.scheduler_type = "cosine"
+
+        BLANK_IDX = 33
+        self.criterion = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
+
+        # разморозить все слои для начала
+        for param in self.model.parameters():
+            param.requires_grad = True
+
+        self.model.train()
+
+        for name, param in self.model.named_parameters():
+            total_params += param.numel()
+            if not param.requires_grad:
+                frozen_params += param.numel()
+                self.logger.info(f"❌ Заморожен: {name}")
+            else:
+                self.logger.info(f"✅ Разморожен: {name}")
+        
+        self.logger.info(f"Статистика:")
+        self.logger.info(f"Всего параметров: {total_params:,}")
+        self.logger.info(f"Заморожено: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+        self.logger.info(f"Обучается: {total_params-frozen_params:,} ({(total_params-frozen_params)/total_params*100:.1f}%)")
 
     def training_step(self, batch, batch_idx):
         audios, audio_lengths, texts = batch
@@ -37,34 +62,95 @@ class CTCLightningModule(pl.LightningModule):
                 )
         
         return loss.item()
+    
+    def training_step(self, batch, batch_idx):
+        wav_batch, wav_lengths, targets, target_lengths, texts = batch
+        
+        wav_batch = wav_batch.to(self.device)
+        wav_lengths = wav_lengths.to(self.device)
+        targets = targets.to(self.device)
+        target_lengths = target_lengths.to(self.device)
+        
+        # Прямой проход
+        features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
+        encoded, encoded_len = self.model.encoder(features, feat_lengths)
+        logprobs = self.model.head(encoded)
+        
+        # Log softmax для CTC
+        log_probs = torch.nn.functional.log_softmax(logprobs, dim=-1)
+        
+        # Перестановка для CTC: (T, B, C)
+        log_probs = log_probs.transpose(0, 1)  # (T, B, C)
+        
+        # Убедитесь, что длины корректны
+        input_lengths = encoded_len.clamp(min=1)
+        target_lengths = target_lengths.clamp(min=1)
+        
+        # # Проверка валидности длин для CTC
+        # valid_batch = True
+        # for j in range(input_lengths.size(0)):
+        #     if input_lengths[j] < target_lengths[j]:
+        #         self.logger.warning(f"Пропуск примера {j} в батче: input_lengths {input_lengths[j]} < target_lengths {target_lengths[j]}")
+        #         valid_batch = False
+        #         break
+            
+        # CTC Loss
+        loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
+        loss.backward()
+        return loss.item()
 
     def validation_step(self, batch, batch_idx):
         self.model.eval()
-        audios, audio_lengths, texts = batch
-        
-        model_vocab = get_model_vocab(self.model)
-        texts = get_texts_idxs(texts, model_vocab)
 
-        logprobs, encoded_len = get_gigaam_logprobs(self.model, audios.to(self.device), audio_lengths.to(self.device))
-
-        transcript_lengths=(len(sample) for sample in texts)
-        loss = self._compute_ctc_loss(
-                    logprobs, 
-                    encoded_len,
-                    texts,
-                    transcript_lengths=tuple(transcript_lengths)
-                )
+        wav_batch, wav_lengths, targets, target_lengths, texts = batch
         
+        wav_batch = wav_batch.to(self.device)
+        wav_lengths = wav_lengths.to(self.device)
+        targets = targets.to(self.device)
+        target_lengths = target_lengths.to(self.device)
+        
+        # Прямой проход
+        features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
+        encoded, encoded_len = self.model.encoder(features, feat_lengths)
+        logprobs = self.model.head(encoded)
+        
+        # Log softmax для CTC
+        log_probs = torch.nn.functional.log_softmax(logprobs, dim=-1)
+        
+        # Перестановка для CTC: (T, B, C)
+        log_probs = log_probs.transpose(0, 1)  # (T, B, C)
+        
+        # Убедитесь, что длины корректны
+        input_lengths = encoded_len.clamp(min=1)
+        target_lengths = target_lengths.clamp(min=1)
+            
+        # CTC Loss
+        loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
+
         self.model.train()
         return loss.item()
 
-    def configure_optimizers(self):
+    def configure_optimizers(self):    
         optimizer = torch.optim.Adam(
             self.parameters(),
             lr=self.config.training.learning_rate,
             weight_decay=self.config.training.weight_decay
         )
-        return optimizer
+        
+        if self.scheduler_type == "step":
+            scheduler = StepLR(optimizer, step_size=10, gamma=0.1)
+        elif self.scheduler_type == "cosine":
+            scheduler = CosineAnnealingLR(optimizer, T_max=100)
+        else:
+            return optimizer
+            
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss"
+            }
+        }
 
     def _compute_ctc_loss(self, logprobs, encoded_len, transcripts, transcript_lengths):
         # Проверяем и выравниваем длины
