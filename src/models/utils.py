@@ -48,28 +48,24 @@ def get_gigaam_logprobs(model, wav_batch, wav_lengths, return_transcriptions=Fal
     else:
         return logprobs, encoded_len
 
-def get_texts_idxs(texts: List[str], model_vocab: Dict[str, str]) -> torch.Tensor:
-  texts_idxs = []
-  for text in texts:
-    #print(f"[DEBUG] {text}")
+def pad_list(nested_list, padding_element=33):
+    max_len = max(len(sublist) for sublist in nested_list)
 
+    padded_list = [
+        sublist + [padding_element] * (max_len - len(sublist))
+        for sublist in nested_list
+    ]
+
+    return padded_list
+
+def get_texts_idxs(texts: List[str], model_vocab: Dict[str, str], blank_token=33) -> torch.Tensor:
+  texts_idxs = []
+
+  for text in texts:
     text = preprocess_text(text)
 
-    #print(f"[DEBUG] preprocessed text: {text}")
-
-    text_idxs = [model_vocab[sym] for sym in text]
+    text_idxs = list([model_vocab[sym] for sym in text])
     texts_idxs.append(text_idxs)
 
+  texts_idxs = pad_list(texts_idxs, padding_element=blank_token)
   return torch.tensor(texts_idxs, dtype=torch.int)
-
-# def load_checkpoint(model, checkpoint_path: str, device):
-#     """
-#     Загрузка чекпоинта
-    
-#     Args:
-#         checkpoint_path: путь к чекпоинту
-#     """
-#     checkpoint = torch.load(checkpoint_path, map_location=device)
-    
-#     model.load_state_dict(checkpoint['model_state_dict'])
-#     return model

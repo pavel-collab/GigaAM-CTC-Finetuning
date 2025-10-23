@@ -18,7 +18,7 @@ def main():
         learning_rate=1e-5,
         warmup_steps=1000,
         max_steps=50000,
-        batch_size=1,
+        batch_size=8,
         accumulation_steps=4,
         save_steps=5000,
         eval_steps=1000,
