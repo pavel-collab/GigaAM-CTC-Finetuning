@@ -1,4 +1,5 @@
 from src.models.utils import import_gigaam_model, get_model_vocab, get_gigaam_logprobs
+from src.logger.logger import logger
 
 import torch
 import pytorch_lightning as pl
@@ -13,9 +14,7 @@ class CTCLightningModule(pl.LightningModule):
         # Сохраняем гиперпараметры
         self.save_hyperparameters()
 
-        self.logger.info(f"Using device {self.device}")
-
-        self.model = import_gigaam_model(model_type=self.config.model.name, device=self.device)
+        self.model = import_gigaam_model(model_type=self.config.model.name)
 
         self.scheduler_type = "cosine"
 
@@ -36,10 +35,10 @@ class CTCLightningModule(pl.LightningModule):
             else:
                 self.logger.info(f"✅ Разморожен: {name}")
         
-        self.logger.info(f"Статистика:")
-        self.logger.info(f"Всего параметров: {total_params:,}")
-        self.logger.info(f"Заморожено: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
-        self.logger.info(f"Обучается: {total_params-frozen_params:,} ({(total_params-frozen_params)/total_params*100:.1f}%)")
+        logger.info(f"Статистика:")
+        logger.info(f"Всего параметров: {total_params:,}")
+        logger.info(f"Заморожено: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
+        logger.info(f"Обучается: {total_params-frozen_params:,} ({(total_params-frozen_params)/total_params*100:.1f}%)")
 
     def training_step(self, batch, batch_idx):
         audios, audio_lengths, texts = batch
@@ -48,7 +47,7 @@ class CTCLightningModule(pl.LightningModule):
 
         transcript_lengths=(len(sample) for sample in texts)
 
-        logprobs, encoded_len = get_gigaam_logprobs(self.model, audios.to(self.device), audio_lengths.to(self.device))
+        logprobs, encoded_len = get_gigaam_logprobs(self.model, audios, audio_lengths)
 
         loss =  self._compute_ctc_loss(
                     logprobs,
@@ -62,10 +61,10 @@ class CTCLightningModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
         
-        wav_batch = wav_batch.to(self.device)
-        wav_lengths = wav_lengths.to(self.device)
-        targets = targets.to(self.device)
-        target_lengths = target_lengths.to(self.device)
+        wav_batch = wav_batch
+        wav_lengths = wav_lengths
+        targets = targets
+        target_lengths = target_lengths
         
         # Прямой проход
         features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
@@ -100,10 +99,10 @@ class CTCLightningModule(pl.LightningModule):
 
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
         
-        wav_batch = wav_batch.to(self.device)
-        wav_lengths = wav_lengths.to(self.device)
-        targets = targets.to(self.device)
-        target_lengths = target_lengths.to(self.device)
+        wav_batch = wav_batch
+        wav_lengths = wav_lengths
+        targets = targets
+        target_lengths = target_lengths
         
         # Прямой проход
         features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
@@ -160,7 +159,7 @@ class CTCLightningModule(pl.LightningModule):
         logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
 
         BLANK_IDX = 33
-        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True).to(self.device)
+        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
 
         # Вычисляем потерю
         loss = ctc_loss(

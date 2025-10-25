@@ -5,31 +5,14 @@ import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
-import logging
-import os
 
 from src.models.model import CTCLightningModule
 from src.data.dataset import CTCDataModule
-
-# Настройка локального логирования
-def setup_logging(log_file):
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.StreamHandler()
-        ]
-    )
+from src.logger.logger import logger
 
 @hydra.main(config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     fix_torch_seed()
-
-    # Инициализация логирования
-    setup_logging(cfg.logging.local_log_file)
-    logger = logging.getLogger(__name__)
     
     # Логирование конфигурации
     logger.info("Starting training with config:")
