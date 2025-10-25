@@ -1,4 +1,4 @@
-from src.models.utils import import_gigaam_model, get_model_vocab, get_texts_idxs, get_gigaam_logprobs
+from src.models.utils import import_gigaam_model, get_model_vocab, get_gigaam_logprobs
 
 import torch
 import pytorch_lightning as pl
@@ -6,15 +6,14 @@ from torch import nn
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 
 class CTCLightningModule(pl.LightningModule):
-    def __init__(self, config, logger):
+    def __init__(self, config):
         super().__init__()
         self.config = config
-        self.logger = logger
 
         # Сохраняем гиперпараметры
         self.save_hyperparameters()
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.logger.info(f"Using device {self.device}")
 
         self.model = import_gigaam_model(model_type=self.config.model.name, device=self.device)
 
@@ -46,9 +45,6 @@ class CTCLightningModule(pl.LightningModule):
         audios, audio_lengths, texts = batch
 
         model_vocab = get_model_vocab(self.model)
-
-        #TODO: maybe move it to the dataloader?
-        texts = get_texts_idxs(texts, model_vocab)
 
         transcript_lengths=(len(sample) for sample in texts)
 

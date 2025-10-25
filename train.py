@@ -8,8 +8,8 @@ from pytorch_lightning.loggers import TensorBoardLogger
 import logging
 import os
 
-from models.ctc_model import CTCLightningModule
-from data.datasets import CTCDataModule
+from src.models.model import CTCLightningModule
+from src.data.dataset import CTCDataModule
 
 # Настройка локального логирования
 def setup_logging(log_file):
@@ -23,7 +23,7 @@ def setup_logging(log_file):
         ]
     )
 
-@hydra.main(config_path="config", config_name="config")
+@hydra.main(config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     fix_torch_seed()
 

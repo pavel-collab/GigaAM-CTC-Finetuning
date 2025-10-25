@@ -1,5 +1,8 @@
-defaults:
-  - model: default
+model:
+  name: "ctc"
+  hidden_size: 256
+  num_layers: 4
+  dropout: 0.1
 
 trainer:
   max_epochs: 10
