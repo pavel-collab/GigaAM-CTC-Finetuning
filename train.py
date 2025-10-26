@@ -5,6 +5,7 @@ import hydra
 from omegaconf import DictConfig
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
+import torch
 
 from src.models.model import CTCLightningModule
 from src.data.dataset import CTCDataModule
@@ -38,7 +39,6 @@ def main(cfg: DictConfig):
     )
 
     # Callbacks
-    '''
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor='val_loss',
         dirpath='checkpoints',
@@ -46,7 +46,6 @@ def main(cfg: DictConfig):
         save_top_k=1,
         mode='min'
     )
-    '''
 
     # Trainer
     trainer = pl.Trainer(
@@ -55,7 +54,7 @@ def main(cfg: DictConfig):
         devices=cfg.trainer.devices,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         logger=tb_logger,
-        #callbacks=[checkpoint_callback]
+        callbacks=[checkpoint_callback]
     )
 
     # Запуск обучения
@@ -64,7 +63,7 @@ def main(cfg: DictConfig):
     logger.info("Training completed!")
     
     # Сохраняем вручную после обучения
-    torch.save(model.state_dict(), "./saved_models/final_model_weights.pth")
+    #torch.save(model.state_dict(), "./saved_models/final_model_weights.pth")
     #trainer.save_checkpoint("./saved_models/final_checkpoint.ckpt")
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 from src.models.utils import import_gigaam_model, get_model_vocab, get_gigaam_logprobs
 from src.logger.logger import logger
+from src.utils.utils import calculate_wer
 
 import torch
 import pytorch_lightning as pl
@@ -10,6 +11,7 @@ class CTCLightningModule(pl.LightningModule):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.val_loader = None
 
         # Сохраняем гиперпараметры
         self.save_hyperparameters()
@@ -26,6 +28,9 @@ class CTCLightningModule(pl.LightningModule):
             param.requires_grad = True
 
         self.model.train()
+
+        model_vocab = get_model_vocab(self.model)
+        self.idx_to_char = {val: key for key, val in model_vocab}
 
         '''
         total_params = 0
@@ -63,6 +68,11 @@ class CTCLightningModule(pl.LightningModule):
         
         return loss.item()
     '''
+
+    def on_fit_start(self, trainer, pl_module):
+        """Сохраняем ссылку на валидационный DataLoader при старте обучения"""
+        if trainer.val_dataloaders:
+            self.val_loader = trainer.val_dataloaders[0]
     
     def training_step(self, batch, batch_idx):
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
@@ -130,6 +140,20 @@ class CTCLightningModule(pl.LightningModule):
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
+    
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Вызывается после завершения валидационной эпохи"""
+        if self.val_loader is None:
+            return
+            
+        wer, _, _ = calculate_wer(
+            model=self.model,
+            dataloader=self.val_loader,
+            idx_to_char=self.idx_to_char
+        )
+        
+        # Логируем метрику
+        pl_module.log('wer', wer, on_epoch=True, prog_bar=True)
 
     def configure_optimizers(self):    
         optimizer = torch.optim.Adam(

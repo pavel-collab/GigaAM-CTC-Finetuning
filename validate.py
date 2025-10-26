@@ -26,7 +26,7 @@ if __name__ == '__main__':
     )
 
     model_vocab = get_model_vocab(model)
-    idx_to_cha = {val: key for key, val in model_vocab.items()}
+    idx_to_char = {val: key for key, val in model_vocab.items()}
 
     # wer = calculate_wer_on_dataset(model=model, dataloader=val_loader)
     wer, _, _ = calculate_wer(
