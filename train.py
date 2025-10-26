@@ -25,7 +25,7 @@ def main(cfg: DictConfig):
     model_vocab = get_model_vocab(model.model)
 
     # Инициализация данных
-    data_module = CTCDataModule(cfg, model_vocab=model_vocab, logger=logger)
+    data_module = CTCDataModule(cfg, model_vocab=model_vocab)
 
     # Логгер для TensorBoard
     tb_logger = TensorBoardLogger(

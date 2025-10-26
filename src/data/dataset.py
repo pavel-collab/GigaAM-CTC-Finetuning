@@ -75,9 +75,9 @@ class CTCDataModule(pl.LightningDataModule):
     def val_dataloader(self):
         self.val_loader = DataLoader(
             self.val_dataset,
-            batch_size=self.config.batch_size,
+            batch_size=self.config.training.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=self.config.training.num_workers,
             collate_fn=self.collate_fn
         )
 

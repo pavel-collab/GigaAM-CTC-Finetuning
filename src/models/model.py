@@ -27,13 +27,15 @@ class CTCLightningModule(pl.LightningModule):
 
         self.model.train()
 
+        total_params = 0
+        frozen_params = 0
         for name, param in self.model.named_parameters():
             total_params += param.numel()
             if not param.requires_grad:
                 frozen_params += param.numel()
-                self.logger.info(f"❌ Заморожен: {name}")
+                logger.info(f"❌ Заморожен: {name}")
             else:
-                self.logger.info(f"✅ Разморожен: {name}")
+                logger.info(f"✅ Разморожен: {name}")
         
         logger.info(f"Статистика:")
         logger.info(f"Всего параметров: {total_params:,}")
