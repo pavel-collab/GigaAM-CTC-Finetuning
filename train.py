@@ -54,6 +54,7 @@ def main(cfg: DictConfig):
         devices=cfg.trainer.devices,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         logger=tb_logger,
+        accumulate_grad_batches=4,
         callbacks=[checkpoint_callback]
     )
 

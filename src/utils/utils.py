@@ -1,6 +1,8 @@
 import jiwer
+import torch
+from tqdm import tqdm
 
-def greedy_decode(logprobs, idx_to_chair, blank_id=33):
+def greedy_decode(logprobs, idx_to_char, blank_id=33):
     """
     CTC greedy decoding согласно официальной реализации
     logprobs: (T, C) - логарифмы вероятностей, где C = 34 (33 символа + blank)
@@ -19,7 +21,7 @@ def greedy_decode(logprobs, idx_to_chair, blank_id=33):
     
     return ''.join(idx_to_char.get(tok, '') for tok in token_ids)
 
-def calculate_wer(model, dataloader, idx_to_char, blank_id=33):
+def calculate_wer(model, dataloader, idx_to_char, device="cpu", blank_id=33):
     """Вычисление WER на датасете"""
     model.eval()
     references = []
@@ -29,8 +31,8 @@ def calculate_wer(model, dataloader, idx_to_char, blank_id=33):
         for batch in tqdm(dataloader, desc="Вычисление WER"):
             wav_batch, wav_lengths, targets, target_lengths, texts = batch
             
-            wav_batch = wav_batch
-            wav_lengths =s
+            wav_batch = wav_batch.to(device)
+            wav_lengths = wav_lengths.to(device)
 
             # Прямой проход
             features, feat_lengths = model.preprocessor(wav_batch, wav_lengths)

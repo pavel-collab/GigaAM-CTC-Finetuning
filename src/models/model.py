@@ -24,13 +24,21 @@ class CTCLightningModule(pl.LightningModule):
         self.criterion = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True)
 
         # разморозить все слои для начала
+        '''
         for param in self.model.parameters():
             param.requires_grad = True
+        '''
 
         self.model.train()
 
         model_vocab = get_model_vocab(self.model)
-        self.idx_to_char = {val: key for key, val in model_vocab}
+        self.idx_to_char = {val: key for key, val in model_vocab.items()}
+
+        for name, param in self.model.named_parameters():
+            if 'encoder' in name and any(f'.{i}.' in name for i in range(8)):  # Первые 8 слоев энкодера
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
 
         '''
         total_params = 0
@@ -68,11 +76,6 @@ class CTCLightningModule(pl.LightningModule):
         
         return loss.item()
     '''
-
-    def on_fit_start(self, trainer, pl_module):
-        """Сохраняем ссылку на валидационный DataLoader при старте обучения"""
-        if trainer.val_dataloaders:
-            self.val_loader = trainer.val_dataloaders[0]
     
     def training_step(self, batch, batch_idx):
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
@@ -140,8 +143,17 @@ class CTCLightningModule(pl.LightningModule):
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
 
         return loss
-    
-    def on_validation_epoch_end(self, trainer, pl_module):
+        
+    def on_validation_epoch_end(self):
+        # Получаем валидационный DataLoader через trainer
+        val_dataloader = self.trainer.val_dataloaders
+        
+        # Если несколько DataLoader'ов, обращаемся по индексу
+        if isinstance(val_dataloader, list):
+            self.val_loader = val_dataloader[0]
+        else:
+            self.val_loader = val_dataloader
+
         """Вызывается после завершения валидационной эпохи"""
         if self.val_loader is None:
             return
@@ -149,11 +161,13 @@ class CTCLightningModule(pl.LightningModule):
         wer, _, _ = calculate_wer(
             model=self.model,
             dataloader=self.val_loader,
-            idx_to_char=self.idx_to_char
+            idx_to_char=self.idx_to_char,
+            device=self.device
         )
         
         # Логируем метрику
-        pl_module.log('wer', wer, on_epoch=True, prog_bar=True)
+        self.log('wer', wer, on_epoch=True, prog_bar=True)
+        logger.info(f"wer {wer}")
 
     def configure_optimizers(self):    
         optimizer = torch.optim.Adam(
