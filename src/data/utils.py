@@ -30,7 +30,7 @@ class FunctionFactory:
             for i, w in enumerate(wavs):
                 wav_batch[i, :w.shape[0]] = w.float()
 
-            target_lists = [text_to_indices(t, self.model_vocab) for t in texts]
+            target_lists = [text_to_indices(t, self.model_vocabular) for t in texts]
             target_lengths = torch.tensor([len(t) for t in target_lists], dtype=torch.long)
             targets = torch.tensor([idx for seq in target_lists for idx in seq], dtype=torch.long)
 

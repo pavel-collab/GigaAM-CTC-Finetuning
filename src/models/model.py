@@ -27,6 +27,7 @@ class CTCLightningModule(pl.LightningModule):
 
         self.model.train()
 
+        '''
         total_params = 0
         frozen_params = 0
         for name, param in self.model.named_parameters():
@@ -41,7 +42,9 @@ class CTCLightningModule(pl.LightningModule):
         logger.info(f"Всего параметров: {total_params:,}")
         logger.info(f"Заморожено: {frozen_params:,} ({frozen_params/total_params*100:.1f}%)")
         logger.info(f"Обучается: {total_params-frozen_params:,} ({(total_params-frozen_params)/total_params*100:.1f}%)")
+        '''
 
+    '''
     def training_step(self, batch, batch_idx):
         audios, audio_lengths, texts = batch
 
@@ -59,6 +62,7 @@ class CTCLightningModule(pl.LightningModule):
                 )
         
         return loss.item()
+    '''
     
     def training_step(self, batch, batch_idx):
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
@@ -93,12 +97,12 @@ class CTCLightningModule(pl.LightningModule):
             
         # CTC Loss
         loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
-        loss.backward()
-        return loss.item()
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+
+        #! we don't need to call loss.backward() because pytorch lightning will do it by itself
+        return loss
 
     def validation_step(self, batch, batch_idx):
-        self.model.eval()
-
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
         
         wav_batch = wav_batch
@@ -120,12 +124,12 @@ class CTCLightningModule(pl.LightningModule):
         # Убедитесь, что длины корректны
         input_lengths = encoded_len.clamp(min=1)
         target_lengths = target_lengths.clamp(min=1)
-            
+
         # CTC Loss
         loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
 
-        self.model.train()
-        return loss.item()
+        return loss
 
     def configure_optimizers(self):    
         optimizer = torch.optim.Adam(

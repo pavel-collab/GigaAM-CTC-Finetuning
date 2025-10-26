@@ -4,3 +4,6 @@ __pycache__
 gigaam_checkoints
 tmp.py
 gigaam_checkpoints
+logs
+outputs
+saved_models

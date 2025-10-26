@@ -1,4 +1,5 @@
 from src.data.utils import FunctionFactory
+from src.data.preprocess import preprocess_text
 
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
@@ -9,6 +10,8 @@ import torch
 class AudioDataset(Dataset):   
     def __init__(self, dataset_part: str="train"):
        self.dataset = load_dataset("google/fleurs", "ru_ru")
+       self.normalize_fn = preprocess_text
+
 
        if dataset_part == "train":
         self.dataset = self.dataset['train']
