@@ -52,22 +52,6 @@ class GigaAMTrainer:
         fp16: bool = True,
         num_workers: int = 4,
     ):
-        """
-        Args:
-            model_name: имя модели для загрузки ("ssl", "ctc", "rnnt", "v1_ssl", "v2_ctc" и т.д.)
-            output_dir: директория для сохранения чекпоинтов
-            learning_rate: learning rate
-            warmup_steps: количество шагов warmup
-            max_steps: максимальное количество шагов обучения
-            batch_size: размер батча
-            accumulation_steps: шаги градиентной аккумуляции
-            save_steps: частота сохранения чекпоинтов
-            eval_steps: частота валидации
-            fp16: использование mixed precision
-            num_workers: количество воркеров для DataLoader
-        """
-        #? can we exchange all of this assignments to save_hyperparameters?
-        #? do we need to use a pytorch lightning wrpaper for it?
         self.model_type = model_type
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -112,16 +96,11 @@ class GigaAMTrainer:
         self.criterion = nn.CTCLoss(blank=self.BLANK_IDX, reduction='mean', zero_infinity=True)
 
         # замораживаем веса
-        freeze_model_completely(self.model)
+        # freeze_model_completely(self.model)
         # freeze_model_selective(self.model)
         # freeze_by_components(self.model)
 
         self.print_frozen_stats()
-        
-        #! Temporary disable mixed procision       
-        # # Настройка mixed precision
-        # self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
-        # self.use_amp = fp16 and torch.cuda.is_available()
        
         # Инициализация оптимизатора (будет настроен в train)
         self.optimizer = None
@@ -159,14 +138,6 @@ class GigaAMTrainer:
         self.logger.info(f"TensorBoard логи: {tb_dir}")
 
     def log_metrics(self, metrics: Dict, step: int, prefix: str = ""):
-        """
-        Логирование метрик в консоль, TensorBoard и W&B
-       
-        Args:
-            metrics: словарь с метриками {"metric_name": value, ...}
-            step: номер шага/эпохи
-            prefix: префикс для организации метрик (например "train", "val")
-        """
         # Консоль
         metrics_str = " - ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
                                  for k, v in metrics.items()])
@@ -189,58 +160,30 @@ class GigaAMTrainer:
             self.tb_writer.flush()
 
     def setup_optimizer(self):
-        """Настройка оптимизатора и планировщика"""
-        # Оптимизатор AdamW с weight decay
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = AdamW(
-            self.model.parameters(), #! указываем оптимизатору параметры модели, так мы сможем обновлять ее веса
+            trainable_params,
             lr=self.learning_rate,
-            betas=(0.9, 0.98),
-            eps=1e-6,
+            eps=1e-8,
             weight_decay=0.01
         )
        
         # Cosine annealing scheduler с warmup
         self.scheduler = CosineAnnealingLR(
             self.optimizer,
-            T_max=self.max_steps - self.warmup_steps,
-            eta_min=1e-7
+            max_lr=1e-4,
+            epochs=self.max_epochs,
+            steps_per_epoch=len(self.train_loader) // self.accumulation_steps,
+            pct_start=0.1
         )
 
     def train_step(self, batch) -> float:
-        """
-        Один шаг обучения
-       
-        Args:
-            batch: батч данных
-           
-        Returns:
-            значение loss
-        """
         wav_batch, wav_lengths, targets, target_lengths, texts = batch
 
         wav_batch = wav_batch.to(self.device)
         wav_lengths = wav_lengths.to(self.device)
         targets = targets.to(self.device)
         target_lengths = target_lengths.to(self.device)
-
-        #! temporary disable mixed precision
-        # # Forward pass с mixed precision
-        # if self.use_amp:
-        #     with torch.cuda.amp.autocast():
-        #         # Здесь должна быть логика вычисления loss
-        #         # Для SSL модели - это masked prediction loss
-        #         # Для CTC/RNNT - это соответствующие loss функции
-               
-        #         # Пример для CTC (нужно адаптировать под конкретную задачу)
-        #         # outputs = self.model(audios, audio_lengths)
-        #         # loss = self.compute_loss(outputs, texts, audio_lengths)
-               
-        #         # Заглушка - нужно реализовать специфичную логику
-        #         loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-        # else:
-        #     # outputs = self.model(audios, audio_lengths)
-        #     # loss = self.compute_loss(outputs, texts, audio_lengths)
-        #     loss = torch.tensor(0.0, requires_grad=True, device=self.device)
 
         # Прямой проход
         features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
@@ -259,33 +202,19 @@ class GigaAMTrainer:
       
         # CTC Loss
         loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
-
-        #! temporary disable mixed precision
-        # # Backward pass
-        # if self.use_amp:
-        #     self.scaler.scale(loss / self.accumulation_steps).backward()
-        # else:
-        #     (loss / self.accumulation_steps).backward()
        
         (loss / self.accumulation_steps).backward()
 
         return loss.item()
     
     def train(self):
-        """
-        Основной цикл обучения
-       
-        Args:
-            train_manifest: путь к манифесту тренировочных данных
-            val_manifest: путь к манифесту валидационных данных
-        """
         # Создание датасетов
         self.logger.info("Создание датасетов...")
 
         char2idx = get_model_vocab_char2idx(self.model)
 
         train_dataset = AudioDataset(dataset_part="train", normalize_fn=normalize_text)
-        train_loader = DataLoader(
+        self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
@@ -295,7 +224,7 @@ class GigaAMTrainer:
         )
        
         val_dataset = AudioDataset(dataset_part="validation", normalize_fn=normalize_text)
-        val_loader = DataLoader(
+        self.val_loader = DataLoader(
             val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
@@ -306,9 +235,6 @@ class GigaAMTrainer:
        
         # Настройка оптимизатора
         self.setup_optimizer()
-       
-        # Режим тренировки
-        self.model.train()
 
         self.logger.info("Начало обучения...")
         self.logger.info(f"Батч размер: {self.batch_size}")
@@ -318,12 +244,14 @@ class GigaAMTrainer:
         running_loss = 0.0
         self.optimizer.zero_grad()
 
-        best_wer = float('inf')
+        self.best_wer = float('inf')
        
         while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
+            self.model.trin()
             self.current_epoch += 1
+            self.optimizer.zero_grad()
            
-            pbar = tqdm(train_loader, desc=f"Эпоха {self.current_epoch}")
+            pbar = tqdm(self.train_loader, desc=f"Эпоха {self.current_epoch}")
             for step, batch in enumerate(pbar):
                 loss = self.train_step(batch)
                 running_loss += loss
@@ -331,25 +259,9 @@ class GigaAMTrainer:
                 # Gradient accumulation
                 if (step + 1) % self.accumulation_steps == 0:
                     # Gradient clipping
-                    #! mixed precision is temporary disabled
-                    # if self.use_amp:
-                    #     self.scaler.unscale_(self.optimizer)
-                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    #     self.scaler.step(self.optimizer)
-                    #     self.scaler.update()
-                    # else:
-                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    #     self.optimizer.step()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                     self.optimizer.step()
-                   
-                    # Warmup
-                    if self.global_step < self.warmup_steps:
-                        lr = self.learning_rate * (self.global_step + 1) / self.warmup_steps
-                        for param_group in self.optimizer.param_groups:
-                            param_group['lr'] = lr
-                    else:
-                        self.scheduler.step()
+                    self.scheduler.step()
                    
                     self.optimizer.zero_grad()
                     self.global_step += 1
@@ -371,7 +283,7 @@ class GigaAMTrainer:
                     # Валидация
                     if self.global_step % self.eval_steps == 0:
                         self.logger.info(f"Валидация на шаге {self.global_step}...")
-                        self.validate(val_loader)
+                        self.validate(self.val_loader)
                 
                     # Сохранение чекпоинта
                     #! temporarry comment this line, cause of no so much free space on my test device
@@ -380,7 +292,14 @@ class GigaAMTrainer:
 
                     running_loss = 0.0
 
-            self.validate(val_loader)
+            # Финализация градиентов в конце эпохи
+            if len(self.train_loader) % self.accumulation_steps != 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                self.optimizer.step()
+                self.scheduler.step()
+                self.optimizer.zero_grad()
+
+            self.validate(self.val_loader)
            
             if self.global_step >= self.max_steps:
                 break
