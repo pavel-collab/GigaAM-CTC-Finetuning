@@ -112,7 +112,7 @@ class GigaAMTrainer:
         self.criterion = nn.CTCLoss(blank=self.BLANK_IDX, reduction='mean', zero_infinity=True)
 
         # замораживаем веса
-        freeze_model_completely(self.model)
+        # freeze_model_completely(self.model)
         # freeze_model_selective(self.model)
         # freeze_by_components(self.model)
 
@@ -318,7 +318,7 @@ class GigaAMTrainer:
         running_loss = 0.0
         self.optimizer.zero_grad()
 
-        best_wer = float('inf')
+        self.best_wer = float('inf')
        
         while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
             self.current_epoch += 1
@@ -402,10 +402,10 @@ class GigaAMTrainer:
         self.model.eval()
 
         idx2char = get_model_vocab_idx2char(self.model)
-        wer, refs, hyps = calculate_wer(self.model, self.val_loader, self.device, idx2char, self.BLANK_IDX)
+        wer, refs, hyps = calculate_wer(self.model, val_loader, self.device, idx2char, self.BLANK_IDX)
 
-        if wer < best_wer:
-            best_wer = wer
+        if wer < self.best_wer:
+            self.best_wer = wer
             checkpoint_path = os.path.join(self.output_dir, f'best_model_wer_{wer*100:.2f}.pt')
             torch.save({
                 'epoch': self.current_epoch,
