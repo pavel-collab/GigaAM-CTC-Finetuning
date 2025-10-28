@@ -1,7 +1,7 @@
 from src.data.dataset import AudioDataset
 from src.data.preprocess import normalize_text
-from src.data.utils import collate_fn
-from src.models.utils import import_gigaam_model, get_model_vocab_idx2char
+from src.data.utils import collate_fn_wrapper
+from src.models.utils import import_gigaam_model, get_model_vocab_idx2char, get_model_vocab_char2idx
 from src.utils.utils import calculate_wer
 #from gigaam.gigaam.preprocess import FeatureExtractor
 from src.models.utils import get_gigaam_logprobs, get_texts_idxs
@@ -282,8 +282,7 @@ class GigaAMTrainer:
         # Создание датасетов
         self.logger.info("Создание датасетов...")
 
-        #preprocessor = FeatureExtractor(sample_rate=16000, features=64)
-        preprocessor = None
+        char2idx = get_model_vocab_char2idx(self.model)
 
         train_dataset = AudioDataset(dataset_part="train", normalize_fn=normalize_text)
         train_loader = DataLoader(
@@ -291,7 +290,7 @@ class GigaAMTrainer:
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
+            collate_fn=lambda x: collate_fn_wrapper(x, char2idx),
             # pin_memory=True if torch.cuda.is_available() else False
         )
        
@@ -301,7 +300,7 @@ class GigaAMTrainer:
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
+            collate_fn=lambda x: collate_fn_wrapper(x, char2idx),
             # pin_memory=True if torch.cuda.is_available() else False
         )
        

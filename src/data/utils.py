@@ -17,7 +17,8 @@ def text_to_indices(text, char_to_idx):
             print(f"Предупреждение: символ '{ch}' не найден в словаре")
     return indices
 
-def collate_fn(batch):
+# wrapper, потому что оригинальная сигнатура collate_fn принимает 1 аргумент, но мы эту проблемку решим на месте с помощью lambda функции
+def collate_fn_wrapper(batch, char2idx):
     wavs, texts, sampling_rates = zip(*batch)
 
     wav_lengths = torch.tensor([w.shape[0] for w in wavs], dtype=torch.long)
@@ -28,7 +29,7 @@ def collate_fn(batch):
     for i, w in enumerate(wavs):
         wav_batch[i, :w.shape[0]] = w.float()
 
-    target_lists = [text_to_indices(t, char_to_idx) for t in texts]
+    target_lists = [text_to_indices(t, char2idx) for t in texts]
     target_lengths = torch.tensor([len(t) for t in target_lists], dtype=torch.long)
     targets = torch.tensor([idx for seq in target_lists for idx in seq], dtype=torch.long)
 
