@@ -167,13 +167,18 @@ class GigaAMTrainer:
             eps=1e-8,
             weight_decay=0.01
         )
+
+        steps_per_epoch = len(self.train_loader) // self.accumulation_steps
+        if len(self.train_loader) % self.accumulation_steps != 0:
+            steps_per_epoch += 1
        
         # Cosine annealing scheduler с warmup
-        self.scheduler = CosineAnnealingLR(
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer,
             max_lr=1e-4,
             epochs=self.max_epochs,
-            steps_per_epoch=len(self.train_loader) // self.accumulation_steps,
+            steps_per_epoch=steps_per_epoch,
+            # total_steps=(len(self.train_loader) // self.accumulation_steps) * self.max_epochs,
             pct_start=0.1
         )
 
@@ -247,7 +252,7 @@ class GigaAMTrainer:
         self.best_wer = float('inf')
        
         while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
-            self.model.trin()
+            self.model.train()
             self.current_epoch += 1
             self.optimizer.zero_grad()
            
@@ -291,13 +296,6 @@ class GigaAMTrainer:
                     #     self.save_checkpoint()
 
                     running_loss = 0.0
-
-            # Финализация градиентов в конце эпохи
-            if len(self.train_loader) % self.accumulation_steps != 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                self.optimizer.step()
-                self.scheduler.step()
-                self.optimizer.zero_grad()
 
             self.validate(self.val_loader)
            
