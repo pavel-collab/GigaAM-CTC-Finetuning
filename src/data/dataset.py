@@ -21,38 +21,40 @@ class AudioDataset(Dataset):
     - Формат JSON: [{"audio_path": "path/to/audio.wav", "text": "транскрипция"}, ...]
     """
    
-    def __init__(self, preprocessor, dataset_part: str="train"):
-       self.dataset = load_dataset("google/fleurs", "ru_ru")
-       if dataset_part == "train":
-        self.dataset = self.dataset['train']
-       elif dataset_part == "validation":
-        self.dataset = self.dataset['validation']
-       else: 
-          self.dataset = self.dataset['test']
+    def __init__(self, dataset_part, normalize_fn: str="train"):
+        self.dataset = load_dataset("google/fleurs", "ru_ru")
         
-       self.preprocessor = preprocessor
+        if dataset_part == "train":
+            self.dataset = self.dataset['train']
+        elif dataset_part == "validation":
+            self.dataset = self.dataset['validation']
+        else: 
+            self.dataset = self.dataset['test']
+        
+        self.normalize_fn = normalize_fn
+
+        self.indices = []
+        for idx in range(len(self.dataset)):
+            self.indices.append(idx)
+
    
     def __len__(self) -> int:
-        return len(self.dataset)
+        return len(self.indices)
    
     def __getitem__(self, idx: int) -> Dict:
-        sample = self.dataset[idx]
-
-        # mel_spec_signal, signal_len = self.preprocessor(
-        #    torch.tensor(sample['audio']['array'], dtype=torch.float32),
-        #    torch.tensor(sample['num_samples'], dtype=torch.int32)
-        # )
-
-        # return {
-        #     'audio': mel_spec_signal,
-        #     'num_samples': signal_len,
-        #     'transcription': sample['transcription'],
-        # }
-
-        #! We actually don't need to apply a preprocessor to the data, because
-        #! in the this preprocessor is already in vanilla model
-        return {
-            'audio': torch.tensor(sample['audio']['array'], dtype=torch.float32),
-            'num_samples': torch.tensor(sample['num_samples'], dtype=torch.int32),
-            'transcription': sample['transcription'],
-        }
+        actual_idx = self.indices[idx]
+        sample = self.dataset[actual_idx]
+        
+        # Аудио
+        audio_array = sample['audio']['array']
+        sampling_rate = sample['audio']['sampling_rate']
+        wav = torch.from_numpy(audio_array).float()
+        
+        # Нормализация к моно
+        if wav.dim() > 1:
+            wav = wav.mean(dim=0)
+        
+        # Текст
+        text = self.normalize_fn(sample['transcription'])
+        
+        return wav, text, sampling_rate

@@ -7,9 +7,15 @@ import torch
 import re
 from typing import List, Dict
 
-def get_model_vocab(model):
-    model_vocab = {sym: idx for idx, sym in enumerate(model.decoding.tokenizer.vocab)}
-    return model_vocab
+def get_model_vocab_char2idx(model):
+    vocab = model.decoding.tokenizer.vocab
+    char_to_idx = {ch: i for i, ch in enumerate(vocab)} 
+    return char_to_idx
+
+def get_model_vocab_idx2char(model):
+    vocab = model.decoding.tokenizer.vocab
+    idx_to_char = {i: ch for i, ch in enumerate(vocab)}
+    return idx_to_char
 
 def import_gigaam_model(model_type: str="ctc", checkpoint_path: str=None, device: str="cpu"):
     CACHE_DIR = os.path.expanduser("~/.cache/gigaam")
