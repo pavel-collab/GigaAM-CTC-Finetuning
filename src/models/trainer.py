@@ -1,8 +1,10 @@
 from src.data.dataset import AudioDataset
-from src.data.utils import collate_fn
-from src.models.utils import import_gigaam_model
+from src.data.preprocess import normalize_text, preprocess_text
+from src.data.utils import collate_fn_wrapper
+from src.models.utils import import_gigaam_model, get_model_vocab_idx2char, get_model_vocab_char2idx
+from src.utils.utils import calculate_wer
 #from gigaam.gigaam.preprocess import FeatureExtractor
-from src.models.utils import get_gigaam_logprobs, get_texts_idxs, get_model_vocab
+from src.models.utils import get_gigaam_logprobs, get_texts_idxs
 from src.utils.freeze_weights import (
     freeze_model_completely,
     freeze_model_selective,
@@ -11,6 +13,7 @@ from src.utils.freeze_weights import (
 
 import logging
 
+import os
 import torch
 import torch.nn as nn
 import torch
@@ -49,22 +52,6 @@ class GigaAMTrainer:
         fp16: bool = True,
         num_workers: int = 4,
     ):
-        """
-        Args:
-            model_name: имя модели для загрузки ("ssl", "ctc", "rnnt", "v1_ssl", "v2_ctc" и т.д.)
-            output_dir: директория для сохранения чекпоинтов
-            learning_rate: learning rate
-            warmup_steps: количество шагов warmup
-            max_steps: максимальное количество шагов обучения
-            batch_size: размер батча
-            accumulation_steps: шаги градиентной аккумуляции
-            save_steps: частота сохранения чекпоинтов
-            eval_steps: частота валидации
-            fp16: использование mixed precision
-            num_workers: количество воркеров для DataLoader
-        """
-        #? can we exchange all of this assignments to save_hyperparameters?
-        #? do we need to use a pytorch lightning wrpaper for it?
         self.model_type = model_type
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -72,7 +59,6 @@ class GigaAMTrainer:
         self.learning_rate = learning_rate
         self.warmup_steps = warmup_steps
 
-        self.max_steps = max_steps
         self.batch_size = batch_size
         self.accumulation_steps = accumulation_steps
         self.save_steps = save_steps
@@ -105,17 +91,15 @@ class GigaAMTrainer:
 
         self.model.to(self.device)
 
+        self.BLANK_IDX = 33
+        self.criterion = nn.CTCLoss(blank=self.BLANK_IDX, reduction='mean', zero_infinity=True)
+
         # замораживаем веса
-        freeze_model_completely(self.model)
+        # freeze_model_completely(self.model)
         # freeze_model_selective(self.model)
         # freeze_by_components(self.model)
 
         self.print_frozen_stats()
-        
-        #! Temporary disable mixed procision       
-        # # Настройка mixed precision
-        # self.scaler = torch.cuda.amp.GradScaler() if fp16 and torch.cuda.is_available() else None
-        # self.use_amp = fp16 and torch.cuda.is_available()
        
         # Инициализация оптимизатора (будет настроен в train)
         self.optimizer = None
@@ -153,14 +137,6 @@ class GigaAMTrainer:
         self.logger.info(f"TensorBoard логи: {tb_dir}")
 
     def log_metrics(self, metrics: Dict, step: int, prefix: str = ""):
-        """
-        Логирование метрик в консоль, TensorBoard и W&B
-       
-        Args:
-            metrics: словарь с метриками {"metric_name": value, ...}
-            step: номер шага/эпохи
-            prefix: префикс для организации метрик (например "train", "val")
-        """
         # Консоль
         metrics_str = " - ".join([f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}"
                                  for k, v in metrics.items()])
@@ -183,121 +159,86 @@ class GigaAMTrainer:
             self.tb_writer.flush()
 
     def setup_optimizer(self):
-        """Настройка оптимизатора и планировщика"""
-        # Оптимизатор AdamW с weight decay
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = AdamW(
-            self.model.parameters(), #! указываем оптимизатору параметры модели, так мы сможем обновлять ее веса
+            trainable_params,
             lr=self.learning_rate,
-            betas=(0.9, 0.98),
-            eps=1e-6,
+            eps=1e-8,
             weight_decay=0.01
         )
+
+        steps_per_epoch = len(self.train_loader) // self.accumulation_steps
+        if len(self.train_loader) % self.accumulation_steps != 0:
+            steps_per_epoch += 1
        
         # Cosine annealing scheduler с warmup
-        self.scheduler = CosineAnnealingLR(
+        self.scheduler = torch.optim.lr_scheduler.OneCycleLR(
             self.optimizer,
-            T_max=self.max_steps - self.warmup_steps,
-            eta_min=1e-7
+            max_lr=1e-4,
+            epochs=self.max_epochs,
+            steps_per_epoch=steps_per_epoch,
+            # total_steps=(len(self.train_loader) // self.accumulation_steps) * self.max_epochs,
+            pct_start=0.1
         )
 
     def train_step(self, batch) -> float:
-        """
-        Один шаг обучения
-       
-        Args:
-            batch: батч данных
-           
-        Returns:
-            значение loss
-        """
-        audios, audio_lengths, texts = batch
+        wav_batch, wav_lengths, targets, target_lengths, texts = batch
+
+        wav_batch = wav_batch.to(self.device)
+        wav_lengths = wav_lengths.to(self.device)
+        targets = targets.to(self.device)
+        target_lengths = target_lengths.to(self.device)
+
+        # Прямой проход
+        features, feat_lengths = self.model.preprocessor(wav_batch, wav_lengths)
+        encoded, encoded_len = self.model.encoder(features, feat_lengths)
+        logprobs = self.model.head(encoded)
+
+        # Log softmax для CTC
+        log_probs = torch.nn.functional.log_softmax(logprobs, dim=-1)
         
-        #audios = batch['audio'].to(self.device)
-        #audio_lengths = batch['num_samples'].to(self.device)
-        #texts = batch['transcription']
-
-        #! temporary disable mixed precision
-        # # Forward pass с mixed precision
-        # if self.use_amp:
-        #     with torch.cuda.amp.autocast():
-        #         # Здесь должна быть логика вычисления loss
-        #         # Для SSL модели - это masked prediction loss
-        #         # Для CTC/RNNT - это соответствующие loss функции
-               
-        #         # Пример для CTC (нужно адаптировать под конкретную задачу)
-        #         # outputs = self.model(audios, audio_lengths)
-        #         # loss = self.compute_loss(outputs, texts, audio_lengths)
-               
-        #         # Заглушка - нужно реализовать специфичную логику
-        #         loss = torch.tensor(0.0, requires_grad=True, device=self.device)
-        # else:
-        #     # outputs = self.model(audios, audio_lengths)
-        #     # loss = self.compute_loss(outputs, texts, audio_lengths)
-        #     loss = torch.tensor(0.0, requires_grad=True, device=self.device)
+        # Перестановка для CTC: (T, B, C)
+        log_probs = log_probs.transpose(0, 1)  # (T, B, C)
+        
+        # Убедитесь, что длины корректны
+        input_lengths = encoded_len.clamp(min=1)
+        target_lengths = target_lengths.clamp(min=1)
       
-        model_vocab = get_model_vocab(self.model)
-
-        texts = get_texts_idxs(texts, model_vocab)
-
-        transcript_lengths=(len(sample) for sample in texts)
-        #! forward pass находится внутри этой функции compute_ctc_loss. Согласен, с точки зрения архитектуры -- не очень, но пока работаем так
-        loss = self.compute_ctc_loss(
-                    audios, 
-                    audio_lengths,
-                    texts,
-                    transcript_lengths=tuple(transcript_lengths)
-                )
-
-        #! temporary disable mixed precision
-        # # Backward pass
-        # if self.use_amp:
-        #     self.scaler.scale(loss / self.accumulation_steps).backward()
-        # else:
-        #     (loss / self.accumulation_steps).backward()
+        # CTC Loss
+        loss = self.criterion(log_probs, targets, input_lengths, target_lengths)
        
         (loss / self.accumulation_steps).backward()
 
         return loss.item()
     
     def train(self):
-        """
-        Основной цикл обучения
-       
-        Args:
-            train_manifest: путь к манифесту тренировочных данных
-            val_manifest: путь к манифесту валидационных данных
-        """
         # Создание датасетов
         self.logger.info("Создание датасетов...")
 
-        #preprocessor = FeatureExtractor(sample_rate=16000, features=64)
-        preprocessor = None
+        char2idx = get_model_vocab_char2idx(self.model)
 
-        train_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="train")
-        train_loader = DataLoader(
+        train_dataset = AudioDataset(dataset_part="train", normalize_fn=normalize_text)
+        self.train_loader = DataLoader(
             train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
+            collate_fn=lambda x: collate_fn_wrapper(x, char2idx),
             # pin_memory=True if torch.cuda.is_available() else False
         )
        
-        val_dataset = AudioDataset(preprocessor=preprocessor, dataset_part="validation")
-        val_loader = DataLoader(
+        val_dataset = AudioDataset(dataset_part="validation", normalize_fn=normalize_text)
+        self.val_loader = DataLoader(
             val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=collate_fn,
+            collate_fn=lambda x: collate_fn_wrapper(x, char2idx),
             # pin_memory=True if torch.cuda.is_available() else False
         )
        
         # Настройка оптимизатора
         self.setup_optimizer()
-       
-        # Режим тренировки
-        self.model.train()
 
         self.logger.info("Начало обучения...")
         self.logger.info(f"Батч размер: {self.batch_size}")
@@ -306,11 +247,15 @@ class GigaAMTrainer:
        
         running_loss = 0.0
         self.optimizer.zero_grad()
+
+        self.best_wer = float('inf')
        
-        while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
+        while self.current_epoch < self.max_epochs:
+            self.model.train()
             self.current_epoch += 1
+            self.optimizer.zero_grad()
            
-            pbar = tqdm(train_loader, desc=f"Эпоха {self.current_epoch}")
+            pbar = tqdm(self.train_loader, desc=f"Эпоха {self.current_epoch}")
             for step, batch in enumerate(pbar):
                 loss = self.train_step(batch)
                 running_loss += loss
@@ -318,25 +263,9 @@ class GigaAMTrainer:
                 # Gradient accumulation
                 if (step + 1) % self.accumulation_steps == 0:
                     # Gradient clipping
-                    #! mixed precision is temporary disabled
-                    # if self.use_amp:
-                    #     self.scaler.unscale_(self.optimizer)
-                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    #     self.scaler.step(self.optimizer)
-                    #     self.scaler.update()
-                    # else:
-                    #     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
-                    #     self.optimizer.step()
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                     self.optimizer.step()
-                   
-                    # Warmup
-                    if self.global_step < self.warmup_steps:
-                        lr = self.learning_rate * (self.global_step + 1) / self.warmup_steps
-                        for param_group in self.optimizer.param_groups:
-                            param_group['lr'] = lr
-                    else:
-                        self.scheduler.step()
+                    self.scheduler.step()
                    
                     self.optimizer.zero_grad()
                     self.global_step += 1
@@ -358,8 +287,7 @@ class GigaAMTrainer:
                     # Валидация
                     if self.global_step % self.eval_steps == 0:
                         self.logger.info(f"Валидация на шаге {self.global_step}...")
-                        # val_loss = self.validate(val_loader)
-                        # self.log_metrics({'loss': val_loss}, self.global_step, "val")
+                        self.validate(self.val_loader)
                 
                     # Сохранение чекпоинта
                     #! temporarry comment this line, cause of no so much free space on my test device
@@ -368,55 +296,11 @@ class GigaAMTrainer:
 
                     running_loss = 0.0
 
-            self.validate(val_loader)
-           
-            if self.global_step >= self.max_steps:
-                break
+            self.validate(self.val_loader)
        
         self.logger.info("Сохранение финального чекпоинта...")
         self.save_checkpoint(name="final_model")
         self.logger.info("Обучение завершено!")
-
-    #! На данный момент с ctc_loss есть определенные проблемы
-    #! Там нужно подавать на вход индексы для токенов транскрипции в словаре модели,
-    #! Но там в словаре только обычные русские буквы, нет символов типо : и др
-    #! Как вариант, можно убирать все символы нерусского алфавита из строчки транскрипции,
-    #! Или считать функцию потерь MSE через логиты    
-    def compute_ctc_loss(self, wav_batch, wav_lengths, transcripts, transcript_lengths):
-        # Получаем логиты от модели
-        logprobs, encoded_len = get_gigaam_logprobs(self.model, wav_batch.to(self.device), wav_lengths.to(self.device))
-
-        '''
-        print(f"[DEBUG] transcripts shape {transcripts.shape}")
-        print(f"[DEBUG] transcripts_lengths {transcript_lengths}")
-        print(f"[DEBUG] logprobs shape {logprobs.shape}")
-        print(f"[DEBUG] logprobs len {encoded_len}")
-        '''
-
-        # Проверяем и выравниваем длины
-        encoded_len = tuple(encoded_len.to('cpu').numpy())
-        
-        # Убеждаемся, что encoded_len не превышает длину logprobs по времени
-        T = logprobs.size(1)  # временная размерность после transpose
-        encoded_len = tuple(min(el, T) for el in encoded_len)
-        
-        #print(f"[DEBUG] new logprobs len {encoded_len}")
-
-        # CTCLoss требует логиты в формате (T, N, C)
-        logprobs = logprobs.transpose(0, 1)  # Теперь форма (T, N, C)
-
-        BLANK_IDX = 33
-        ctc_loss = nn.CTCLoss(blank=BLANK_IDX, reduction='mean', zero_infinity=True).to(self.device)
-
-        # Вычисляем потерю
-        loss = ctc_loss(
-            logprobs,           # (T, N, C)
-            transcripts,        # (N, S) -> целочисленные индексы
-            encoded_len,        # (N,) -> длины выходных последовательностей
-            transcript_lengths  # (N,) -> длины целевых последовательностей
-        )
-
-        return loss
 
     def validate(self, val_loader: DataLoader) -> float:
         """
@@ -429,53 +313,29 @@ class GigaAMTrainer:
             средний loss на валидации
         """
         self.model.eval()
-        total_loss = 0.0
-        num_batches = 0
 
-        val_metrics = {}
-        
-        with torch.no_grad():
-            for batch in tqdm(val_loader, desc="Валидация"):
-                audios, audio_lengths, texts = batch
+        idx2char = get_model_vocab_idx2char(self.model)
+        wer, refs, hyps = calculate_wer(self.model, val_loader, self.device, idx2char, self.BLANK_IDX)
 
-                '''
-                audios = batch['audio'].to(self.device)
-                audio_lengths = batch['num_samples'].to(self.device)
-                texts = batch['transcription']
-               '''
+        if wer < self.best_wer:
+            self.best_wer = wer
+            checkpoint_path = os.path.join(self.output_dir, f'best_model_wer_{wer*100:.2f}.pt')
+            torch.save({
+                'epoch': self.current_epoch,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'scheduler_state_dict': self.scheduler.state_dict(),
+                'wer': wer,
+                # 'loss': avg_loss,
+                'vocab': self.model.decoding.tokenizer.vocab,
+                # 'char_to_idx': char_to_idx,
+                'blank_idx': self.BLANK_IDX,  # Сохраняем blank index
+            }, checkpoint_path)
 
-                #! mixed precision is temporary disabled
-                # if self.use_amp:
-                #     with torch.cuda.amp.autocast():
-                #         # loss = self.compute_loss(...)
-                #         loss = torch.tensor(0.0, device=self.device)  # Заглушка
-                # else:
-                #     # loss = self.compute_loss(...)
-                #     loss = torch.tensor(0.0, device=self.device)  # Заглушка
-               
-                model_vocab = get_model_vocab(self.model)
-                texts = get_texts_idxs(texts, model_vocab)
+        self.log_metrics({"wer": wer}, self.global_step, "validation")
 
-                transcript_lengths=(len(sample) for sample in texts)
-                loss = self.compute_ctc_loss(
-                            audios, 
-                            audio_lengths,
-                            texts,
-                            transcript_lengths=tuple(transcript_lengths)
-                        )
-
-                total_loss += loss.item()
-                num_batches += 1
-
-        avg_val_loss = total_loss / num_batches if num_batches > 0 else 0.0
-        val_metrics['loss'] = avg_val_loss
-
-        # Логирование метрик валидации в TensorBoard
-        self.log_metrics(val_metrics, self.global_step, "val")
-       
         self.model.train()
-       
-        return total_loss / num_batches if num_batches > 0 else 0.0
+        return wer
     
     def save_checkpoint(self, name: str = None):
         """
