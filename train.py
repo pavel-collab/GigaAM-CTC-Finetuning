@@ -17,7 +17,6 @@ def main():
         output_dir="./gigaam_checkpoints",
         learning_rate=1e-5,
         warmup_steps=1000,
-        max_steps=50000,
         batch_size=4,
         accumulation_steps=4,
         save_steps=5000,

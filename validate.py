@@ -1,5 +1,5 @@
 from src.models.utils import import_gigaam_model, get_model_vocab_idx2char, get_model_vocab_char2idx
-from src.data.preprocess import normalize_text
+from src.data.preprocess import normalize_text, preprocess_text
 from src.utils.utils import calculate_wer
 from src.data.dataset import AudioDataset
 from src.data.utils import collate_fn_wrapper

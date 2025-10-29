@@ -1,5 +1,5 @@
 from src.data.dataset import AudioDataset
-from src.data.preprocess import normalize_text
+from src.data.preprocess import normalize_text, preprocess_text
 from src.data.utils import collate_fn_wrapper
 from src.models.utils import import_gigaam_model, get_model_vocab_idx2char, get_model_vocab_char2idx
 from src.utils.utils import calculate_wer
@@ -59,7 +59,6 @@ class GigaAMTrainer:
         self.learning_rate = learning_rate
         self.warmup_steps = warmup_steps
 
-        self.max_steps = max_steps
         self.batch_size = batch_size
         self.accumulation_steps = accumulation_steps
         self.save_steps = save_steps
@@ -251,7 +250,7 @@ class GigaAMTrainer:
 
         self.best_wer = float('inf')
        
-        while self.current_epoch < self.max_epochs and self.global_step < self.max_steps:
+        while self.current_epoch < self.max_epochs:
             self.model.train()
             self.current_epoch += 1
             self.optimizer.zero_grad()
@@ -298,9 +297,6 @@ class GigaAMTrainer:
                     running_loss = 0.0
 
             self.validate(self.val_loader)
-           
-            if self.global_step >= self.max_steps:
-                break
        
         self.logger.info("Сохранение финального чекпоинта...")
         self.save_checkpoint(name="final_model")
